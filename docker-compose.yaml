@@ -1,0 +1,22 @@
+services:
+  pilot-bot:
+    container_name: pilot-bot
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SCHEDULE_DB_PATH: /app/data/schedule.sqlite
+
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    volumes:
+      - ./data:/app/data

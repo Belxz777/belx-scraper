@@ -1,0 +1,26 @@
+{
+  
+  "scripts": {
+    "dev": "bun --watch src/bot/bot.ts",
+    "bot": "bun src/bot/bot.ts",
+
+    "schedule:fetch": "bun src/cli.ts",
+    "schedule:show": "bun src/cli.ts show",
+    "schedule:dates": "bun src/cli.ts dates"
+  },
+
+  "name": "pilot-scraper",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "grammy": "^1.46.0"
+  }
+}

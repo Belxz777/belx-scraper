@@ -49,6 +49,13 @@ db.exec(`
   group_name TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+ CREATE TABLE IF NOT EXISTS schedule_notifications (
+    chat_id    TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    sent_at    TEXT NOT NULL,
+
+    PRIMARY KEY (chat_id, date)
+  );
   CREATE INDEX IF NOT EXISTS idx_lessons_date_group ON lessons(date, group_name);
 `);
 
@@ -245,5 +252,68 @@ export function deleteChatGroup(
     WHERE chat_id = $chat_id
   `).run({
     $chat_id: String(chatId),
+  });
+}
+export interface ChatGroup {
+  chat_id: string;
+  group_name: string;
+  updated_at: string;
+}
+
+export function listChatsForGroup(
+  groupName: string,
+): string[] {
+  const rows = db
+    .query(`
+      SELECT chat_id
+      FROM chat_groups
+      WHERE group_name = $group_name
+    `)
+    .all({
+      $group_name: groupName,
+    }) as { chat_id: string }[];
+
+  return rows.map((row) => row.chat_id);
+}
+
+export function wasScheduleNotificationSent(
+  chatId: string,
+  isoDate: string,
+): boolean {
+  const row = db
+    .query(`
+      SELECT 1
+      FROM schedule_notifications
+      WHERE chat_id = $chat_id
+        AND date = $date
+      LIMIT 1
+    `)
+    .get({
+      $chat_id: chatId,
+      $date: isoDate,
+    });
+
+  return Boolean(row);
+}
+
+export function markScheduleNotificationSent(
+  chatId: string,
+  isoDate: string,
+): void {
+  db.query(`
+    INSERT OR IGNORE INTO schedule_notifications (
+      chat_id,
+      date,
+      sent_at
+    )
+    VALUES (
+      $chat_id,
+      $date,
+      $sent_at
+    )
+  `).run({
+    $chat_id: chatId,
+    $date: isoDate,
+    $sent_at: new Date().toISOString(),
   });
 }

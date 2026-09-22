@@ -177,9 +177,7 @@ export function getGroupScheduleMessage(
     normalizedGroup,
     lessons,
   );
-  console.log(
-  JSON.stringify(text, null, 2),
-);
+
   return {
     ok: true,
     isoDate,

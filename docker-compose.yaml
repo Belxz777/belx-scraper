@@ -14,6 +14,7 @@ services:
       NODE_ENV: production
       PORT: 3000
       SCHEDULE_DB_PATH: /app/data/schedule.sqlite
+      TZ: Europe/Samara
 
     ports:
       - "127.0.0.1:3000:3000"

@@ -11,6 +11,7 @@ import {
   saveRawPage,
   saveParsedPage,
   getRawPage,
+  touchRawPage,
 } from "../db";
 
 import {
@@ -28,6 +29,23 @@ export interface FetchStoreDetails {
   isoDate: string;
   error?: string;
 }
+const REFRESH_INTERVAL_MS = (Number(process.env.REFRESH_TIMEOUT_SEC) || 600) * 1000;
+
+function isFresh(
+  fetchedAt: string,
+  now: number = Date.now(),
+): boolean {
+  const t = Date.parse(fetchedAt);
+  if (Number.isNaN(t)) return false;
+  return now - t < REFRESH_INTERVAL_MS;
+}
+export interface FetchOptions {
+  /**
+   * Принудительно сходить в сеть, игнорируя TTL кэша.
+   * Может пригодиться для /refresh или админ-команд.
+   */
+  force?: boolean;
+}
 
 /**
  * Скачать расписание конкретного дня,
@@ -35,13 +53,35 @@ export interface FetchStoreDetails {
  */
 export async function fetchAndStore(
   date: Date,
+  opts: FetchOptions = {},
 ): Promise<FetchStoreDetails> {
   const isoDate = toIsoDate(date);
+  const existing = getRawPage(isoDate);
+    if (
+    !opts.force &&
+    existing &&
+    existing.status === "ok" &&
+    isFresh(existing.fetched_at)
+  ) {
+    return { status: "ok", isoDate };
+  }
   const url = toScheduleUrl(date);
-
   const result = await fetchPage(url);
 
   if (!result.ok) {
+    const status: FetchStoreResult =
+      result.status === 404 ? "notfound" : "error";
+
+    if (existing && existing.status === "ok" && existing.html) {
+      return {
+        status,
+        isoDate,
+        error: result.error,
+      };
+    }
+
+    // Рабочего кэша нет — фиксируем неудачу, чтобы не долбить сервер
+    // на каждый запрос.
     saveRawPage({
       isoDate,
       url,
@@ -50,61 +90,45 @@ export async function fetchAndStore(
     });
 
     return {
-      status:
-        result.status === 404
-          ? "notfound"
-          : "error",
-
+      status,
       isoDate,
-
       error: result.error,
     };
   }
 
-  saveRawPage({
+  const newHtml = result.html ?? "";
+   if (
+    existing &&
+    existing.status === "ok" &&
+    existing.html === newHtml
+  ) {
+    touchRawPage(isoDate);
+    return { status: "ok", isoDate };
+  }
+    saveRawPage({
     isoDate,
     url,
     status: "ok",
     httpStatus: result.status,
-    html: result.html,
+    html: newHtml,
   });
 
-  const parsed = parseSchedulePage(
-    result.html!,
-    isoDate,
-  );
-
+  const parsed = parseSchedulePage(newHtml, isoDate);
   saveParsedPage(parsed);
 
-  return {
-    status: "ok",
-    isoDate,
-  };
+  return { status: "ok", isoDate };
 }
 
 /**
- * Если даты нет в БД — скачивает её.
+ * Если даты нет в БД — скачивает её. через fetchAndStore()
  *
- * Если она уже есть — ничего не делает.
+ * Если она уже есть — ничего не делает. getRawPage() вернёт её.
  */
 export async function ensureSchedule(
   date: Date,
 ): Promise<FetchStoreDetails> {
-  const isoDate = toIsoDate(date);
 
-  const existing = getRawPage(isoDate);
-
-  if (
-    existing &&
-    existing.status === "ok"
-  ) {
-    return {
-      status: "ok",
-      isoDate,
-    };
-  }
-
-  return fetchAndStore(date);
+    return fetchAndStore(date);
 }
 
 /**

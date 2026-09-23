@@ -84,12 +84,14 @@ export function saveRawPage(params: {
     $html: params.html ?? null,
   });
 }
-
-export function getRawPage(isoDate: string) {
-  return db.query(`SELECT * FROM raw_pages WHERE date = $date`).get({ $date: isoDate }) as
-    | { date: string; url: string; fetched_at: string; status: string; http_status: number | null; html: string | null }
-    | null;
-}
+/**
+ легаси
+ */
+// export function getRawPage(isoDate: string) {
+//   return db.query(`SELECT * FROM raw_pages WHERE date = $date`).get({ $date: isoDate }) as
+//     | { date: string; url: string; fetched_at: string; status: string; http_status: number | null; html: string | null }
+//     | null;
+// }
 
 export function saveParsedPage(parsed: ParsedPage) {
   const del = db.transaction(() => {
@@ -198,6 +200,20 @@ export function listGroupsForDate(isoDate: string): string[] {
     .query(`SELECT DISTINCT group_name FROM lessons WHERE date = $date ORDER BY group_name`)
     .all({ $date: isoDate }) as { group_name: string }[];
   return rows.map((r) => r.group_name);
+}
+export  function listAllGroups (): string[] {
+  const rows = db
+  .query(`select distinct group_name from lessons `)
+  .all() as { group_name: string }[];
+  return rows.map((r) => r.group_name);
+
+}
+export function listChatIds(): string[] {
+  const rows = db
+    .query(`SELECT chat_id FROM chat_groups`)
+    .all() as { chat_id: string }[];
+
+  return rows.map((row) => row.chat_id);
 }
 export interface ChatGroup {
   chat_id: string;
@@ -315,5 +331,41 @@ export function markScheduleNotificationSent(
     $chat_id: chatId,
     $date: isoDate,
     $sent_at: new Date().toISOString(),
+  });
+}
+export interface RawPage {
+  date: string;
+  url: string;
+  fetched_at: string;
+  status: "ok" | "error";
+  http_status: number | null;
+  html: string | null;
+}
+
+export function getRawPage(isoDate: string): RawPage | null {
+  return (
+    db
+      .query<RawPage, { $date: string }>(
+        `SELECT date, url, fetched_at, status, http_status, html
+         FROM raw_pages
+         WHERE date = $date`
+      )
+      .get({ $date: isoDate }) ?? null
+  );
+}
+
+/**
+ * Обновляет только отметку времени — используется, когда
+ * содержимое страницы не изменилось, но нужно «освежить» кэш,
+ * чтобы не долбить сервер на каждом запросе.
+ */
+export function touchRawPage(isoDate: string): void {
+  db.query(
+    `UPDATE raw_pages
+       SET fetched_at = $fetched_at
+     WHERE date = $date`
+  ).run({
+    $date: isoDate,
+    $fetched_at: new Date().toISOString(),
   });
 }

@@ -1,10 +1,11 @@
-import { Bot } from "grammy";
+import { Bot,InputFile } from "grammy";
 
 import {
   getChatGroup,
   setChatGroup,
   deleteChatGroup,
   listGroupsForDate,
+  listChatIds,
 } from "../db";
 
 import {
@@ -19,6 +20,8 @@ import {
   parseUserDate,
   toIsoDate,
 } from "../dates";
+import { adminOnly, isAdmin } from "../roles/rules";
+import { renderScheduleImage } from "../render/image";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -33,7 +36,7 @@ if (!token) {
   );
 }
 
-const bot = new Bot(token);
+export const bot = new Bot(token);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,8 +83,13 @@ function isDateArg(
 interface ScheduleArgs {
   group: string | null;
   dateArg: string;
+  image?: boolean;
 }
 
+const IMAGE_TOKENS = new Set([
+  "image", "img", "photo", "pic",
+  "фото", "картинка", "изображение",
+]);
 /**
  * Разбирает:
  *
@@ -92,6 +100,7 @@ interface ScheduleArgs {
  * /schedule И-26-1 tomorrow
  * /schedule tomorrow И-26-1
  */
+
 function parseScheduleArgs(
   raw: string,
   savedGroup: string | null,
@@ -107,10 +116,16 @@ function parseScheduleArgs(
       : null;
 
   let dateArg = "today";
+  let image = false;
 
   for (const token of tokens) {
+    const lower = token.toLowerCase();
     if (isGroupName(token)) {
       group = normalizeGroup(token);
+      continue;
+    }
+    if (IMAGE_TOKENS.has(lower)) {
+      image = true;
       continue;
     }
 
@@ -123,9 +138,63 @@ function parseScheduleArgs(
   return {
     group,
     dateArg,
+    image,
   };
 }
+// ---------------------------------------------------------------------------
+// Единая отправка расписания: текст или картинка
+// ---------------------------------------------------------------------------
 
+async function replySchedule(
+  ctx: any,
+  dateArg: string,
+  group: string,
+  asImage: boolean,
+): Promise<void> {
+  if (!asImage) {
+    const result = getGroupScheduleMessage(dateArg, group);
+
+    await ctx.reply(result.text, {
+      parse_mode: "HTML",
+      link_preview_options: {
+        is_disabled: true,
+      },
+    });
+
+    return;
+  }
+
+  // --- Картинка -----------------------------------------------------------
+  const rendered = await renderScheduleImage(dateArg, group);
+
+  if (!rendered.ok || !rendered.filePath) {
+    // Что-то пошло не так — отдаём хотя бы текстовую версию.
+    console.error(
+      "renderScheduleImage failed:",
+      rendered.errorText,
+    );
+
+    const result = getGroupScheduleMessage(dateArg, group);
+
+    await ctx.reply(
+      result.text ||
+        "❌ Не удалось построить изображение расписания.",
+      {
+        parse_mode: "HTML",
+        link_preview_options: {
+          is_disabled: true,
+        },
+      },
+    );
+
+    return;
+  }
+
+  await ctx.replyWithPhoto(new InputFile(rendered.filePath), {
+    parse_mode: "HTML",
+    caption: rendered.caption,
+  });
+}
 // ---------------------------------------------------------------------------
 // /start
 // ---------------------------------------------------------------------------
@@ -167,7 +236,7 @@ bot.command(
   async (ctx) => {
     await ctx.reply(
       [
-        "📚 <b>Команды расписания</b>",
+        "▤  <b>Команды расписания</b>",
         "",
         "<b>Расписание:</b>",
         "/schedule",
@@ -185,6 +254,10 @@ bot.command(
         "/mygroup",
         "/unsetgroup",
         "",
+        "<b>Расписание картинкой:</b>",
+        "/schedule 23.09 image",
+        "",
+     
         "<b>Список групп:</b>",
         "/groups",
       ].join("\n"),
@@ -239,7 +312,7 @@ bot.command(
     );
 
     await ctx.reply(
-      `✅ Этот чат привязан к группе <b>${escapeHtml(group)}</b>.`,
+      `✓  Этот чат привязан к группе <b>${escapeHtml(group)}</b>.`,
       {
         parse_mode: "HTML",
       },
@@ -261,7 +334,7 @@ bot.command(
 
     if (!saved) {
       await ctx.reply(
-        "ℹ️ Для этого чата группа ещё не задана.\n\n" +
+        "ⓘ Для этого чата группа ещё не задана.\n\n" +
         "Используй:\n" +
         "<code>/setgroup И-26-1</code>",
         {
@@ -273,7 +346,7 @@ bot.command(
     }
 
     await ctx.reply(
-      `📚 Группа этого чата: <b>${escapeHtml(saved.group_name)}</b>`,
+      `▤  Группа этого чата: <b>${escapeHtml(saved.group_name)}</b>`,
       {
         parse_mode: "HTML",
       },
@@ -295,7 +368,7 @@ bot.command(
 
     if (!saved) {
       await ctx.reply(
-        "ℹ️ У этого чата нет привязанной группы.",
+        "ⓘ  У этого чата нет привязанной группы.",
       );
 
       return;
@@ -306,7 +379,7 @@ bot.command(
     );
 
     await ctx.reply(
-      `✅ Привязка группы <b>${escapeHtml(saved.group_name)}</b> удалена.`,
+      `✓  Привязка группы <b>${escapeHtml(saved.group_name)}</b> удалена.`,
       {
         parse_mode: "HTML",
       },
@@ -322,25 +395,27 @@ bot.command(
   "schedule",
   async (ctx) => {
     try {
+
       const chatId =
         getChatId(ctx);
 
       const saved =
         getChatGroup(chatId);
 
-      const {
-        group,
-        dateArg,
-      } = parseScheduleArgs(
-        String(ctx.match ?? ""),
-        saved?.group_name ?? null,
-      );
+     const {
+  group,
+  dateArg,
+  image,
+} = parseScheduleArgs(
+  String(ctx.match ?? ""),
+  saved?.group_name ?? null,
+);
 
       // Нет группы
       if (!group) {
         await ctx.reply(
           [
-            "❗ Группа не указана.",
+            "✘  Группа не указана.",
             "",
             "Сначала привяжи группу:",
             "<code>/setgroup И-26-1</code>",
@@ -372,7 +447,7 @@ bot.command(
       // ---------------------------------------------------------------------
 
       await ctx.reply(
-        "🔄 Проверяю расписание...",
+        "↻ Проверяю расписание...",
       );
 
       const fetched =
@@ -399,7 +474,9 @@ bot.command(
             "❌ Не удалось загрузить расписание.",
             "",
             fetched.error
-              ? `Ошибка: <code>${escapeHtml(fetched.error)}</code>`
+              ? `Ошибка: <code>${escapeHtml(fetched.error)}</code> \n
+              Вероятнее всего расписание еще не выложили
+              `
               : "",
           ]
             .filter(Boolean)
@@ -416,22 +493,14 @@ bot.command(
       // Получаем красивый текст
       // ---------------------------------------------------------------------
 
-      const result =
-        getGroupScheduleMessage(
-          dateArg,
-          group,
-        );
-
-      await ctx.reply(
-        result.text,
-        {
-          parse_mode: "HTML",
-          link_preview_options: {
-            is_disabled: true,
-          },
-        },
+     await replySchedule(
+        ctx,
+        dateArg,
+        group,
+        image === true,
       );
-    } catch (error) {
+    } 
+    catch (error) {
       console.error(
         "schedule command error:",
         error,
@@ -562,7 +631,7 @@ bot.command(
 
       const text =
         [
-          `📚 <b>Группы на ${escapeHtml(isoDate)}</b>`,
+          `▤  <b>Группы на ${escapeHtml(isoDate)}</b>`,
           "",
           ...groups.map(
             (group, index) =>
@@ -589,15 +658,89 @@ bot.command(
   },
 );
 
+bot.command(
+  "notify",
+  async (ctx) => {
+    if (!isAdmin(ctx)) {
+      await ctx.reply(
+        "✕  У вас нет доступа к этой команде.",
+      );
+
+      return;
+    }
+
+    const message = String(
+      ctx.match ?? "",
+    ).trim();
+
+    if (!message) {
+      await ctx.reply(
+        [
+          "Использование:",
+          "",
+          "<code>/notify Текст сообщения</code>",
+          "",
+          "Например:",
+          "<code>/notify Завтра пары начинаются в 10:00</code>",
+        ].join("\n"),
+        {
+          parse_mode: "HTML",
+        },
+      );
+
+      return;
+    }
+
+    const chatIds = listChatIds();
+    if (chatIds.length === 0) {
+      await ctx.reply(
+        "❌ Нет зарегистрированных чатов.",
+      );
+
+      return;
+    }
+
+    await ctx.reply(
+      `📨 Начинаю отправку в ${chatIds.length} чатов...`,
+    );
+
+    let success = 0;
+    let failed = 0;
+
+    for (const chatId of chatIds) {
+      try {
+        await bot.api.sendMessage(
+          chatId,
+          message,
+        );
+
+        success++;
+
+      } catch (error) {
+        failed++;
+
+        console.error(
+          `Не удалось отправить сообщение в ${chatId}:`,
+          error,
+        );
+      }
+    }
+
+    await ctx.reply(
+      [
+        "✓ Рассылка завершена.",
+        "",
+        `📨 Отправлено: ${success}`,
+        `❌ Ошибок: ${failed}`,
+      ].join("\n"),
+    );
+  },
+);
 // ---------------------------------------------------------------------------
 // Команды Telegram
 // ---------------------------------------------------------------------------
 
 await bot.api.setMyCommands([
-  {
-    command: "schedule",
-    description: "Расписание",
-  },
   {
     command: "today",
     description: "Расписание на сегодня",
@@ -605,6 +748,10 @@ await bot.api.setMyCommands([
   {
     command: "tomorrow",
     description: "Расписание на завтра",
+  },
+  {
+    command: "schedule",
+    description: "Расписание картинкой или в текстовом виде",
   },
   {
     command: "setgroup",
@@ -626,6 +773,7 @@ await bot.api.setMyCommands([
     command: "help",
     description: "Помощь",
   },
+
 ]);
 
 // ---------------------------------------------------------------------------
@@ -700,7 +848,7 @@ const server = Bun.serve({
 });
 
 console.log(
-  `🌐 HTTP server: http://127.0.0.1:${server.port}`,
+  `◉  HTTP server: http://127.0.0.1:${server.port}`,
 );
 
 // ---------------------------------------------------------------------------
@@ -711,11 +859,11 @@ try {
   await bot.init();
 
   console.log(
-    `✅ Telegram API доступен`,
+    `✓  Telegram API доступен`,
   );
 
   console.log(
-    `🤖 Bot: @${bot.botInfo.username}`,
+    `⌬  Bot: @${bot.botInfo.username}`,
   );
 
   console.log(
@@ -741,7 +889,7 @@ try {
 
   if (webhook.url) {
     console.warn(
-      `⚠️ У бота установлен webhook: ${webhook.url}`,
+      `⚠︎  У бота установлен webhook: ${webhook.url}`,
     );
 
     console.warn(
@@ -753,11 +901,11 @@ try {
     });
 
     console.log(
-      "✅ Webhook удалён",
+      "✓  Webhook удалён",
     );
   } else {
     console.log(
-      "✅ Webhook не установлен",
+      "✓  Webhook не установлен",
     );
   }
 } catch (error) {
@@ -797,13 +945,13 @@ process.once(
 // ---------------------------------------------------------------------------
 
 console.log(
-  "🤖 Starting Telegram long polling...",
+  "⌬  Starting Telegram long polling...",
 );
 
 bot.start({
   onStart(botInfo) {
     console.log(
-      `✅ Telegram bot started: @${botInfo.username}`,
+      `✓  Telegram bot started: @${botInfo.username}`,
     );
 
     console.log(

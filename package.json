@@ -1,15 +1,12 @@
 {
-  
   "scripts": {
     "dev": "NODE_ENV=development bun --watch src/bot/bot.ts",
     "start": "NODE_ENV=production bun src/bot/bot.ts",
     "bot": "bun src/bot/bot.ts",
-
     "schedule:fetch": "bun src/cli.ts",
     "schedule:show": "bun src/cli.ts show",
     "schedule:dates": "bun src/cli.ts dates"
   },
-
   "name": "pilot-scraper",
   "module": "index.ts",
   "type": "module",
@@ -21,6 +18,7 @@
     "typescript": "^7"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.9",
     "cheerio": "^1.2.0",
     "grammy": "^1.46.0"
   }

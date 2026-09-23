@@ -1,7 +1,8 @@
 {
   
   "scripts": {
-    "dev": "bun --watch src/bot/bot.ts",
+    "dev": "NODE_ENV=development bun --watch src/bot/bot.ts",
+    "start": "NODE_ENV=production bun src/bot/bot.ts",
     "bot": "bun src/bot/bot.ts",
 
     "schedule:fetch": "bun src/cli.ts",

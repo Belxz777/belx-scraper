@@ -1,7 +1,6 @@
-# pilot-ipek schedule scraper
+# Бот для расписания ИПЭК
 
-Фетчит расписание с `pilot-ipek.ru/raspo/<DD месяц>`, сохраняет в SQLite (сырой HTML +
-разобранные занятия) и выдаёт по запросу — офлайн, без повторных походов на сайт.
+Бот для просмотра расписания ИПЭК в Telegram.
 
 ## Установка
 
@@ -19,25 +18,10 @@ bun run src/cli.ts dates                     # какие даты уже ест
 bun run src/cli.ts dump <дата>               # выгрузить сырой HTML на диск для отладки парсера
 ```
 
-Формат даты: `today` / `tomorrow` / `yesterday` / `DD.MM` / `DD.MM.YYYY`.
-
-Примеры:
+Конфигурация .env :
+1. Для разработки создавайте файл `.env.development` в корне проекта с следующим содержимым:
 ```
-bun run src/cli.ts fetch 23.09.2026
-bun run src/cli.ts range 01.09.2026 30.09.2026
-bun run src/cli.ts show 23.09.2026 И-25-1
+TELEGRAM_BOT_TOKEN=XXXXXXXXX:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
 ```
-
-Данные лежат в `./data/schedule.sqlite` (путь можно переопределить через `SCHEDULE_DB_PATH`).
-
-
-
-1. **Fetcher** (`fetcher.ts`) — тупой HTTP-клиент с ретраями. Ничего не знает о структуре
-   страницы.
-2. **Storage** (`db.ts`, SQLite) — хранит **сырой HTML** в `raw_pages` как источник истины,
-   и уже поверх него — разобранные данные (`lessons`, `unstructured_blocks`).
-3. **Parser** (`parser.ts`) — чистая функция `html -> структура`, ничего не пишет и не
-   фетчит. Вызывается отдельно от storage, поэтому её можно прогнать заново по уже
-   сохранённому HTML без единого сетевого запроса — важно, раз разметка сайта не
-   гарантированно стабильна.
-\
+2. Для работы в продакшене создавайте файл `.env.production` 

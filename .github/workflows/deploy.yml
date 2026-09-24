@@ -30,6 +30,6 @@ jobs:
       # Шаг 4: Очищаем систему от старых неиспользуемых Docker-образов
       - name: Clean up old Docker images
         run: |
-          docker image prune -f
+          docker image prune -f || true
             - name: Wait for service to be healthy
 

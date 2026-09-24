@@ -1,0 +1,35 @@
+name: Deploy Pilot Bot
+
+# 1. Определяем, когда запускать пайплайн
+on:
+  push:
+    branches:
+      - main # Пайплайн сработает автоматически при пуше в ветку main
+
+jobs:
+  build-and-deploy:
+    # Указываем GitHub запускать команды именно на вашем сервере (где запущен runner)
+    runs-on: self-hosted 
+
+    steps:
+      # Шаг 1: Скачиваем свежую версию кода из GitHub в папку раннера
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      # Шаг 2: Безопасно создаем .env.production из секретов GitHub
+      - name: Create environment file
+        run: |
+          echo "${{ secrets.ENV_PRODUCTION }}" > .env.production
+
+      # Шаг 3: Перезапускаем контейнеры в Docker Compose
+      - name: Build and run Docker containers
+        run: |
+          docker compose down
+          docker compose up -d --build
+
+      # Шаг 4: Очищаем систему от старых неиспользуемых Docker-образов
+      - name: Clean up old Docker images
+        run: |
+          docker image prune -f
+            - name: Wait for service to be healthy
+

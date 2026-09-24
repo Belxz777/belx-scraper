@@ -7,17 +7,16 @@ services:
 
     restart: unless-stopped
 
-    env_file:
-      - .env
 
+    env_file:
+      - .env.production
     environment:
       NODE_ENV: production
-      PORT: 3000
-      SCHEDULE_DB_PATH: /app/data/schedule.sqlite
+      PORT: 3200
       TZ: Europe/Samara
 
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3200:3200"
 
     volumes:
       - ./data:/app/data

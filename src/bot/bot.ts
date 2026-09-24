@@ -22,6 +22,7 @@ import {
 } from "../dates";
 import {  isAdmin } from "../roles/rules";
 import { renderScheduleImage } from "../render/image";
+import { logError, logger } from "../logs/logger";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -35,7 +36,7 @@ if (!token) {
     "TELEGRAM_BOT_TOKEN не задан",
   );
 }
-
+const log = logger.child({ module: "bot.ts" });
 export const bot = new Bot(token);
 
 // ---------------------------------------------------------------------------
@@ -449,10 +450,8 @@ bot.command(
       await ctx.reply(
         "↻ Проверяю расписание...",
       );
-      console.log("ensureSchedule");
       const fetched =
         await ensureSchedule(date);
-      console.log(fetched);
       if (
         fetched.status === "notfound"
       ) {
@@ -492,7 +491,7 @@ bot.command(
       // ---------------------------------------------------------------------
       // Получаем красивый текст
       // ---------------------------------------------------------------------
-
+    log.debug(`replySchedule ${dateArg} ${group} ${image}`);
      await replySchedule(
         ctx,
         dateArg,
@@ -501,11 +500,7 @@ bot.command(
       );
     } 
     catch (error) {
-      console.error(
-        "schedule command error:",
-        error,
-      );
-
+      log.error(`schedule command error: ${error}`);
       await ctx.reply(
         "❌ Произошла внутренняя ошибка при получении расписания.",
       );

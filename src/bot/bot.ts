@@ -20,7 +20,7 @@ import {
   parseUserDate,
   toIsoDate,
 } from "../dates";
-import { adminOnly, isAdmin } from "../roles/rules";
+import {  isAdmin } from "../roles/rules";
 import { renderScheduleImage } from "../render/image";
 
 // ---------------------------------------------------------------------------
@@ -449,10 +449,10 @@ bot.command(
       await ctx.reply(
         "↻ Проверяю расписание...",
       );
-
+      console.log("ensureSchedule");
       const fetched =
         await ensureSchedule(date);
-
+      console.log(fetched);
       if (
         fetched.status === "notfound"
       ) {

@@ -16,11 +16,12 @@ import {
   parseUserDate,
   toIsoDate,
 } from "../dates";
+import { logger } from "../logs/logger";
 
 // ---------------------------------------------------------------------------
 // Fonts
 // ---------------------------------------------------------------------------
-
+const log = logger.child({ module: "render/image.ts" });
 const REGULAR_PATHS = [
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -260,6 +261,7 @@ export async function renderScheduleImage(
     const rawPage = getRawPage(isoDate);
 
     if (!rawPage) {
+      log.debug(`attempt to get rawPage for ${dateText} failed`);
       return {
         ok: false,
         errorText: "Эта дата ещё не загружена в базу.",
@@ -267,6 +269,7 @@ export async function renderScheduleImage(
     }
 
     if (rawPage.status !== "ok") {
+      log.debug(`getRawPage error: ${rawPage.status}`);
       return {
         ok: false,
         errorText: "Не удалось получить расписание для этой даты.",
@@ -278,6 +281,7 @@ export async function renderScheduleImage(
     lessons = deduplicateLessons(lessons);
 
     if (lessons.length === 0) {
+      log.debug(`no lessons found for ${dateText} group=${group}`);
       return {
         ok: false,
         errorText: "На эту дату расписание для группы не найдено.",
@@ -449,7 +453,7 @@ export async function renderScheduleImage(
     const caption =
       `<b>${escapeHtml(group)}</b> · ` +
       `<i>${escapeHtml(dateText)}</i>`;
-
+    log.info(`renderScheduleImage ok: ${filePath} for group=${group} date=${dateText}`);
     return {
       ok: true,
       filePath,
@@ -457,9 +461,8 @@ export async function renderScheduleImage(
       caption,
     };
   } catch (error) {
-    console.error("renderScheduleImage error:", error);
-
-    return {
+    log.error(`renderScheduleImage error: ${error}`);
+      return {
       ok: false,
       errorText:
         error instanceof Error ? error.message : String(error),

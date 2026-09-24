@@ -1,11 +1,11 @@
 import { bot } from "../bot/bot";
 import { listChatIds } from "../db";
-import { adminOnly, isAdmin } from "../roles/rules";
+import { logger } from "../logs/logger";
+import {  isAdmin } from "../roles/rules";
 
-
+const log = logger.child({ module: "notify.ts" });
 bot.command(
   "notify",
-  adminOnly,
   async (ctx) => {
     if (!isAdmin(ctx)) {
       await ctx.reply(
@@ -38,8 +38,9 @@ bot.command(
     }
 
     const chatIds = listChatIds();
-    console.log(chatIds);
+    
     if (chatIds.length === 0) {
+      log.debug(`no chats found`);
       await ctx.reply(
         "❌ Нет зарегистрированных чатов.",
       );
@@ -55,6 +56,7 @@ bot.command(
     let failed = 0;
 
     for (const chatId of chatIds) {
+      log.debug(`notify to ${chatId}`);
       try {
         await bot.api.sendMessage(
           chatId,
@@ -64,6 +66,7 @@ bot.command(
         success++;
 
       } catch (error) {
+        log.warn(`notify error: ${error}`);
         failed++;
 
         console.error(
@@ -72,7 +75,7 @@ bot.command(
         );
       }
     }
-
+    log.info(`notify success: ${success} failed: ${failed} `);
     await ctx.reply(
       [
         "✅ Рассылка завершена.",

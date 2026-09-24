@@ -95,16 +95,23 @@ export function saveRawPage(params: {
 
 export function saveParsedPage(parsed: ParsedPage) {
   const del = db.transaction(() => {
-    db.query(`DELETE FROM lessons WHERE date = $date`).run({ $date: parsed.isoDate });
-    db.query(`DELETE FROM unstructured_blocks WHERE date = $date`).run({ $date: parsed.isoDate });
+    for (const day of parsed.days) {
+      db
+        .query(`DELETE FROM lessons WHERE date = $date`)
+        .run({ $date: day.isoDate });
 
-    for (const block of parsed.blocks) {
-      saveBlock(parsed.isoDate, block);
+      db
+        .query(`DELETE FROM unstructured_blocks WHERE date = $date`)
+        .run({ $date: day.isoDate });
+
+      for (const block of day.blocks) {
+        saveBlock(day.isoDate, block);
+      }
     }
   });
+
   del();
 }
-
 function saveBlock(isoDate: string, block: ScheduleBlock) {
   if (block.kind === "unstructured") {
     db.query(

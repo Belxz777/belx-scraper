@@ -1,12 +1,24 @@
-// Даты: сайт использует в URL формат "23 сентября" (число + месяц в родительном падеже).
-// Здесь всё, что нужно, чтобы конвертировать в обе стороны и принимать удобный ввод от пользователя.
+// Даты: сайт использует в URL формат "23 сентября" (число + месяц в родительном падеже),
+// а для парных страниц (пт + сб) — "25, 26 сентября".
 
+import { logger } from "./logs/logger";
+
+// Здесь всё, что нужно, чтобы конвертировать в обе стороны и принимать удобный ввод от пользователя.
+const log = logger.child({ module: "dates.ts" });
 const MONTHS_GENITIVE = [
   "января", "февраля", "марта", "апреля", "мая", "июня",
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ] as const;
 
-const MONTHS_INDEX = new Map<string, number>(MONTHS_GENITIVE.map((m, i) => [m, i]));
+const MONTHS_INDEX = new Map<string, number>(
+  MONTHS_GENITIVE.map((m, i) => [m, i]),
+);
+
+const BASE_URL = "https://www.pilot-ipek.ru/raspo";
+
+// ---------------------------------------------------------------------------
+// Базовые преобразования
+// ---------------------------------------------------------------------------
 
 /** JS Date -> "23 сентября" (без года, как в URL сайта) */
 export function toUrlDatePart(date: Date): string {
@@ -15,11 +27,88 @@ export function toUrlDatePart(date: Date): string {
   return `${day} ${month}`;
 }
 
-/** JS Date -> полный URL страницы расписания */
-export function toScheduleUrl(date: Date): string {
-  const part = toUrlDatePart(date);
-  return `https://www.pilot-ipek.ru/raspo/${encodeURIComponent(part)}`;
+export function getStudyWeekPair(date: Date): [Date, Date] {
+  const d = startOfDay(date);
+
+  // getDay(): 0=вс, 1=пн, ..., 5=пт, 6=сб
+  const day = d.getDay();
+
+  // сколько дней до ближайшей пятницы (включая сегодня, если это пт)
+  let diffToFriday: number;
+  if (day === 5) diffToFriday = 0;
+  else if (day === 6) diffToFriday = -1;      // суббота → пятница была вчера
+  else if (day === 0) diffToFriday = -2;      // воскресенье → пятница позавчера
+  else diffToFriday = 5 - day;                // пн..чт → вперёд к пятнице
+
+  const friday = addDays(d, diffToFriday);
+  const saturday = addDays(friday, 1);
+
+  return [friday, saturday];
 }
+
+/** Парный слаг вида "25, 26 сентября" */
+export function toPairedSlug(friday: Date, saturday: Date): string {
+  return `${friday.getDate()}, ${saturday.getDate()} ${MONTHS_GENITIVE[friday.getMonth()]}`;
+}
+
+/** Единый URL расписания для любой даты — всегда парный (пятница+суббота) */
+export function toScheduleUrl(date: Date): string {
+  const [fri, sat] = getStudyWeekPair(date);
+  const slug = toPairedSlug(fri, sat);
+  log.debug(`toScheduleUrl slug=${slug}`);
+  return `https://www.pilot-ipek.ru/raspo/${encodeURI(slug)}`;
+}
+
+/**
+ * Обратный разбор слага в список дат. Год в слаге не хранится — передаём отдельно.
+ *
+ * Поддерживает:
+ *   "25 сентября"                -> [25 сент]
+ *   "25, 26 сентября"            -> [25 сент, 26 сент]
+ *   "30 сентября, 1 октября"     -> [30 сент, 1 окт]
+ *
+ * Возвращает [] если слаг не распознан.
+ */
+export function parseScheduleSlug(slug: string, year: number): Date[] {
+  const decoded = decodeURIComponent(slug).trim();
+
+  // "25, 26 сентября"
+  let m = decoded.match(/^(\d{1,2}),\s*(\d{1,2})\s+([а-яё]+)$/i);
+  if (m) {
+    const month = MONTHS_INDEX.get(m[3].toLowerCase());
+    if (month === undefined) return [];
+    return [
+      new Date(year, month, Number(m[1])),
+      new Date(year, month, Number(m[2])),
+    ];
+  }
+
+  // "30 сентября, 1 октября"
+  m = decoded.match(/^(\d{1,2})\s+([а-яё]+),\s*(\d{1,2})\s+([а-яё]+)$/i);
+  if (m) {
+    const monthA = MONTHS_INDEX.get(m[2].toLowerCase());
+    const monthB = MONTHS_INDEX.get(m[4].toLowerCase());
+    if (monthA === undefined || monthB === undefined) return [];
+    return [
+      new Date(year, monthA, Number(m[1])),
+      new Date(year, monthB, Number(m[3])),
+    ];
+  }
+
+  // "25 сентября"
+  m = decoded.match(/^(\d{1,2})\s+([а-яё]+)$/i);
+  if (m) {
+    const month = MONTHS_INDEX.get(m[2].toLowerCase());
+    if (month === undefined) return [];
+    return [new Date(year, month, Number(m[1]))];
+  }
+
+  return [];
+}
+
+// ---------------------------------------------------------------------------
+// ISO / парсинг пользовательского ввода
+// ---------------------------------------------------------------------------
 
 /** JS Date -> "YYYY-MM-DD", используется как первичный ключ в БД */
 export function toIsoDate(date: Date): string {
@@ -58,7 +147,7 @@ export function parseUserDate(input: string, now: Date = new Date()): Date {
   const m = s.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?$/);
   if (!m) {
     throw new Error(
-      `Не понял дату: "${input}". Ожидался формат DD.MM.YYYY, DD.MM, today/tomorrow/yesterday.`
+      `Не понял дату: "${input}". Ожидался формат DD.MM.YYYY, DD.MM, today/tomorrow/yesterday.`,
     );
   }
   const day = Number(m[1]);
@@ -72,6 +161,10 @@ export function parseUserDate(input: string, now: Date = new Date()): Date {
   }
   return new Date(year, month, day);
 }
+
+// ---------------------------------------------------------------------------
+// Утилиты
+// ---------------------------------------------------------------------------
 
 export function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());

@@ -18,7 +18,7 @@ import {
 } from "./db";
 
 const [, , cmd, ...args] = process.argv;
-
+//! Добавить логи
 async function main() {
   switch (cmd) {
     case "fetch":
@@ -44,30 +44,91 @@ async function main() {
 async function fetchAndStore(date: Date): Promise<"ok" | "notfound" | "error"> {
   const isoDate = toIsoDate(date);
   const url = toScheduleUrl(date);
+
   process.stdout.write(`Фетчу ${isoDate} (${url}) ... `);
 
   const result = await fetchPage(url);
 
   if (!result.ok) {
     saveRawPage({ isoDate, url, status: "error", httpStatus: result.status });
-    console.log(result.status === 404 ? "нет страницы (404)" : `ошибка: ${result.error}`);
+    console.log(
+      result.status === 404 ? "нет страницы (404)" : `ошибка: ${result.error}`,
+    );
     return result.status === 404 ? "notfound" : "error";
   }
 
-  saveRawPage({ isoDate, url, status: "ok", httpStatus: result.status, html: result.html });
+  // Основная дата — та, по которой ходили
+  saveRawPage({
+    isoDate,
+    url,
+    status: "ok",
+    httpStatus: result.status,
+    html: result.html,
+  });
+
   const parsed = parseSchedulePage(result.html!, isoDate);
+
+  // Пишем все дни, найденные на странице (обычно 1 или 2)
   saveParsedPage(parsed);
 
-  const lessonCount = parsed.blocks
-    .filter((b) => b.kind === "table")
-    .reduce((sum, b: any) => sum + b.periods.reduce((s: number, p: any) => s + p.cells.length, 0), 0);
-  const unstructuredCount = parsed.blocks.filter((b) => b.kind === "unstructured").length;
+  // Все «дополнительные» дни тоже помечаем в raw_pages,
+  // чтобы ensureSchedule для них не дёргал сеть.
+  for (const day of parsed.days) {
+    if (day.isoDate === isoDate) continue;
+
+    saveRawPage({
+      isoDate: day.isoDate,
+      url,
+      status: "ok",
+      httpStatus: result.status,
+      html: result.html,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Статистика
+  // -------------------------------------------------------------------------
+
+  let lessonsTotal = 0;
+  let unstructuredTotal = 0;
+
+  const perDay: string[] = [];
+
+  for (const day of parsed.days) {
+    let lessons = 0;
+    let unstructured = 0;
+
+    for (const block of day.blocks) {
+      if (block.kind === "table") {
+        for (const period of block.periods) {
+          lessons += period.cells.length;
+        }
+      } else {
+        unstructured += 1;
+      }
+    }
+
+    lessonsTotal += lessons;
+    unstructuredTotal += unstructured;
+
+    perDay.push(
+      `${day.isoDate}${day.weekday ? ` (${day.weekday})` : ""}: ` +
+        `блоков ${day.blocks.length}, ячеек ${lessons}` +
+        (unstructured ? `, нераспознано ${unstructured}` : ""),
+    );
+  }
+
+  const daysCount = parsed.days.length;
 
   console.log(
-    `ок, блоков: ${parsed.blocks.length} (ячеек распознано: ${lessonCount}` +
-      (unstructuredCount ? `, нераспознанных блоков: ${unstructuredCount}` : "") +
-      ")"
+    daysCount > 1
+      ? `ок, дней ${daysCount} [${perDay.join(" | ")}]`
+      : `ок, блоков: ${parsed.blocks.length} ` +
+        `(ячеек распознано: ${lessonsTotal}` +
+        (unstructuredTotal ? `, нераспознанных блоков: ${unstructuredTotal}` : "") +
+        ")",
   );
+
   return "ok";
 }
 

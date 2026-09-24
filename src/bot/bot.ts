@@ -22,7 +22,7 @@ import {
 } from "../dates";
 import {  isAdmin } from "../roles/rules";
 import { renderScheduleImage } from "../render/image";
-import { logError, logger } from "../logs/logger";
+import {  logger } from "../logs/logger";
 
 // ---------------------------------------------------------------------------
 // Config

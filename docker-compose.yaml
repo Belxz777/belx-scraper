@@ -9,7 +9,7 @@ services:
 
 
     env_file:
-      - .env.production
+      - .env.production.local
     environment:
       NODE_ENV: production
       PORT: 3200

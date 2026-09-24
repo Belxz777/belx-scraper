@@ -15,4 +15,4 @@ ENV PORT=3200
 
 EXPOSE 3200
 
-CMD ["bun", "start"]
+CMD ["bun", "src/bot/bot.ts"]

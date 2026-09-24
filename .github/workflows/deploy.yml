@@ -31,5 +31,5 @@ jobs:
       - name: Clean up old Docker images
         run: |
           docker image prune -f || true
-            - name: Wait for service to be healthy
+        
 

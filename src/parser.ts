@@ -689,3 +689,4 @@ function normalizeText(
     .replace(/\s+/g, " ")
     .trim();
 }
+//все давай вася

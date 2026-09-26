@@ -18,6 +18,7 @@ import {
 
 import {
   parseUserDate,
+  resolveDates,
   toIsoDate,
 } from "../dates";
 import {  isAdmin } from "../roles/rules";
@@ -106,6 +107,17 @@ function parseScheduleArgs(
   raw: string,
   savedGroup: string | null,
 ): ScheduleArgs {
+   const trimmed = raw.trim();
+
+  // Если пользователь вставил URL — весь ввод считаем датой.
+  const url = extractScheduleUrl(trimmed);
+  if (url) {
+    return {
+      group: savedGroup ? normalizeGroup(savedGroup) : null,
+      dateArg: url,
+      image: false,
+    };
+  }
   const tokens = raw
     .trim()
     .split(/\s+/)
@@ -199,6 +211,18 @@ async function replySchedule(
 // ---------------------------------------------------------------------------
 // /start
 // ---------------------------------------------------------------------------
+function isScheduleUrl(value: string): boolean {
+  return /(?:https?:\/\/)?(?:www\.)?pilot-ipek\.ru\/raspo\//i.test(value);
+}
+
+function extractScheduleUrl(raw: string): string | null {
+  // Берём всё от "pilot-ipek.ru/raspo/" до конца строки —
+  // это позволяет принимать URL даже с пробелом ("25, 26 сентября").
+  const m = raw.match(
+    /(?:https?:\/\/)?(?:www\.)?pilot-ipek\.ru\/raspo\/[^\n]+/i,
+  );
+  return m ? m[0].trim() : null;
+}
 
 bot.command(
   "start",
@@ -447,57 +471,36 @@ bot.command(
       // Если данных нет — скачиваем.
       // ---------------------------------------------------------------------
 
-      await ctx.reply(
-        "↻ Проверяю расписание...",
-      );
-      const fetched =
-        await ensureSchedule(date);
-      if (
-        fetched.status === "notfound"
-      ) {
-        await ctx.reply(
-          `❌ На <b>${escapeHtml(isoDate)}</b> страница расписания отсутствует.`,
-          {
-            parse_mode: "HTML",
-          },
-        );
+const dates = resolveDates(dateArg);
 
-        return;
-      }
+await ctx.reply("↻ Проверяю расписание...");
 
-      if (
-        fetched.status === "error"
-      ) {
-        await ctx.reply(
-          [
-            "❌ Не удалось загрузить расписание.",
-            "",
-            fetched.error
-              ? `Ошибка: <code>${escapeHtml(fetched.error)}</code> \n
-              Вероятнее всего расписание еще не выложили
-              `
-              : "",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-          {
-            parse_mode: "HTML",
-          },
-        );
+for (const d of dates) {
+  const fetched = await ensureSchedule(d);
 
-        return;
-      }
+  if (fetched.status === "notfound") {
+    await ctx.reply(
+      `❌ На <b>${escapeHtml(toIsoDate(d))}</b> страница расписания отсутствует.`,
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
 
-      // ---------------------------------------------------------------------
-      // Получаем красивый текст
-      // ---------------------------------------------------------------------
-    log.debug(`replySchedule ${dateArg} ${group} ${image}`);
-     await replySchedule(
-        ctx,
-        dateArg,
-        group,
-        image === true,
-      );
+  if (fetched.status === "error") {
+    await ctx.reply(
+      [
+        "❌ Не удалось загрузить расписание.",
+        fetched.error
+          ? `Ошибка: <code>${escapeHtml(fetched.error)}</code>\nВероятнее всего расписание еще не выложили`
+          : "",
+      ].filter(Boolean).join("\n"),
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+}
+
+await replySchedule(ctx, dateArg, group, image === true)
     } 
     catch (error) {
       log.error(`schedule command error: ${error}`);

@@ -1,6 +1,7 @@
 // Даты: сайт использует в URL формат "23 сентября" (число + месяц в родительном падеже),
 // а для парных страниц (пт + сб) — "25, 26 сентября".
 
+import { getRawPage } from "./db";
 import { logger } from "./logs/logger";
 
 // Здесь всё, что нужно, чтобы конвертировать в обе стороны и принимать удобный ввод от пользователя.
@@ -15,7 +16,47 @@ const MONTHS_INDEX = new Map<string, number>(
 );
 
 const BASE_URL = "https://www.pilot-ipek.ru/raspo";
+/**
+ * Разбор пользовательского ввода, который может быть URL сайта.
+ * Возвращает массив дат или null, если это не URL.
+ */
+export function parseScheduleUrl(
+  input: string,
+  now: Date = new Date(),
+): Date[] | null {
+  const trimmed = input.trim();
 
+  const match = trimmed.match(
+    /^(?:https?:\/\/)?(?:www\.)?pilot-ipek\.ru\/raspo\/(.+)$/i,
+  );
+  if (!match) return null;
+
+  const slug = decodeURIComponent(match[1]).trim();
+  const year = now.getFullYear();
+
+  const dates = parseScheduleSlug(slug, year);
+  if (dates.length === 0) return null;
+
+  // Та же корректировка года, что и в parseUserDate.
+  const halfYearAgo = new Date(now);
+  halfYearAgo.setDate(now.getDate() - 183);
+
+  return dates.map((d) =>
+    d.getTime() < halfYearAgo.getTime()
+      ? new Date(d.getFullYear() + 1, d.getMonth(), d.getDate())
+      : d,
+  );
+}
+
+/** Универсальный резолвер: URL или обычная дата -> массив Date. */
+export function resolveDates(
+  input: string,
+  now: Date = new Date(),
+): Date[] {
+  const urlDates = parseScheduleUrl(input, now);
+  if (urlDates) return urlDates;
+  return [parseUserDate(input, now)];
+}
 // ---------------------------------------------------------------------------
 // Базовые преобразования
 // ---------------------------------------------------------------------------
@@ -52,10 +93,37 @@ export function toPairedSlug(friday: Date, saturday: Date): string {
 }
 
 /** Единый URL расписания для любой даты — всегда парный (пятница+суббота) */
+/** Единый URL расписания.
+ *
+ * Правила сайта:
+ *   пт  -> парный "25, 26 сентября"
+ *   сб  -> парный "25, 26 сентября" (та же страница, что и пятница)
+ *   пн..чт, вс -> одиночный "28 сентября"
+ */
 export function toScheduleUrl(date: Date): string {
-  const [fri, sat] = getStudyWeekPair(date);
-  const slug = toPairedSlug(fri, sat);
-  log.debug(`toScheduleUrl slug=${slug}`);
+  const d = startOfDay(date);
+  const day = d.getDay(); // 0=вс, 1=пн, ..., 5=пт, 6=сб
+
+  // Суббота — часть пары пт+сб
+  if (day === 6) {
+    const [fri] = getStudyWeekPair(d);
+    const sat = addDays(fri, 1);
+    const slug = toPairedSlug(fri, sat);
+    log.debug(`toScheduleUrl slug=${slug} (sat -> fri+sat)`);
+    return `https://www.pilot-ipek.ru/raspo/${encodeURI(slug)}`;
+  }
+
+  // Пятница — пара с субботой
+  if (day === 5) {
+    const sat = addDays(d, 1);
+    const slug = toPairedSlug(d, sat);
+    log.debug(`toScheduleUrl slug=${slug} (fri+sat)`);
+    return `https://www.pilot-ipek.ru/raspo/${encodeURI(slug)}`;
+  }
+
+  // Пн..чт (и вс на всякий случай) — одиночный день
+  const slug = toUrlDatePart(d);
+  log.debug(`toScheduleUrl slug=${slug} (single)`);
   return `https://www.pilot-ipek.ru/raspo/${encodeURI(slug)}`;
 }
 
@@ -138,6 +206,7 @@ export function fromUrlDatePart(part: string, year: number): Date | null {
  *  - "23.09.2026"
  *  - "23.09" (год берётся текущий; если дата уже прошла больше чем на полгода — считаем, что имелся в виду следующий год)
  */
+
 export function parseUserDate(input: string, now: Date = new Date()): Date {
   const s = input.trim().toLowerCase();
   if (s === "today" || s === "сегодня") return startOfDay(now);

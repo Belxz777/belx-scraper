@@ -6,6 +6,8 @@ import {
 } from "../db";
 
 import {
+  parseScheduleSlug,
+  parseScheduleUrl,
   parseUserDate,
   toIsoDate,
 } from "../dates";
@@ -65,26 +67,50 @@ const PERIOD_EMOJI: Record<number, string> = {
 // group:
 //   И-26-1
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Извлечение дат из URL сайта
+// ---------------------------------------------------------------------------
 
-export function getGroupScheduleMessage(
-  date: string,
-  group: string,
+function extractDatesFromUrl(input: string): Date[] | null {
+  const trimmed = input.trim();
+
+  // Поддерживаем http и https, а также отсутствие протокола
+  const match = trimmed.match(
+    /^(?:https?:\/\/)?(?:www\.)?pilot-ipek\.ru\/raspo\/(.+)$/i,
+  );
+  if (!match) return null;
+
+  const slug = decodeURIComponent(match[1]).trim();
+  const currentYear = new Date().getFullYear();
+
+  // parseScheduleSlug возвращает массив Date (1 или 2 даты)
+  const dates = parseScheduleSlug(slug, currentYear);
+  if (dates.length === 0) return null;
+
+  // Корректировка года: если дата уже прошла более чем на полгода,
+  // вероятно, имелся в виду следующий год (как в parseUserDate)
+  const now = new Date();
+  const halfYearAgo = new Date(now);
+  halfYearAgo.setDate(now.getDate() - 183);
+
+  return dates.map((d) => {
+    if (d.getTime() < halfYearAgo.getTime()) {
+      return new Date(d.getFullYear() + 1, d.getMonth(), d.getDate());
+    }
+    return d;
+  });
+}
+function buildScheduleMessage(
+  isoDate: string,
+  normalizedGroup: string,
 ): ScheduleMessageResult {
-  const isoDate = toIsoDate(parseUserDate(date));
-  const normalizedGroup = normalizeGroup(group);
-
   const rawPage = getRawPage(isoDate);
-
-  // -------------------------------------------------------------------------
-  // Дата вообще не загружена
-  // -------------------------------------------------------------------------
 
   if (!rawPage) {
     return {
       ok: false,
       isoDate,
       group: normalizedGroup,
-
       text:
         `⚠️ <b>Нет расписания</b>\n\n` +
         `Дата: <b>${escapeHtml(formatRuDate(isoDate))}</b>\n` +
@@ -93,16 +119,11 @@ export function getGroupScheduleMessage(
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Страница была загружена, но закончилась ошибкой
-  // -------------------------------------------------------------------------
-
   if (rawPage.status !== "ok") {
     return {
       ok: false,
       isoDate,
       group: normalizedGroup,
-
       text:
         `⚠️ <b>Не удалось получить расписание</b>\n\n` +
         `Дата: <b>${escapeHtml(formatRuDate(isoDate))}</b>\n` +
@@ -110,42 +131,12 @@ export function getGroupScheduleMessage(
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Получаем строки из SQLite
-  // -------------------------------------------------------------------------
-
-  let lessons = getLessons(
-    isoDate,
-    normalizedGroup,
-  );
-
-  // Пустые ячейки таблицы в БД тоже сохраняются,
-  // поэтому убираем их перед отправкой в Telegram.
+  let lessons = getLessons(isoDate, normalizedGroup);
   lessons = lessons.filter(hasLessonData);
-
-  // -------------------------------------------------------------------------
-  // Дубликаты от colspan
-  //
-  // Например:
-  //
-  // ЭР-26-1
-  // ЭР-26-1
-  //
-  // одна HTML-ячейка с colspan=2 попадёт в БД дважды.
-  //
-  // Для одного group/date/period мы оставляем только уникальную комбинацию
-  // предмет + преподаватель + кабинет + flags.
-  // -------------------------------------------------------------------------
-
   lessons = deduplicateLessons(lessons);
-
-  // -------------------------------------------------------------------------
-  // Группа отсутствует
-  // -------------------------------------------------------------------------
 
   if (lessons.length === 0) {
     const knownGroups = listGroupsForDate(isoDate);
-
     let text =
       `📚 <b>${escapeHtml(normalizedGroup)}</b>\n` +
       `📅 ${escapeHtml(formatRuDate(isoDate))}\n\n` +
@@ -155,9 +146,7 @@ export function getGroupScheduleMessage(
       text +=
         `\n\n` +
         `Доступные группы:\n` +
-        knownGroups
-          .map((item) => `• ${escapeHtml(item)}`)
-          .join("\n");
+        knownGroups.map((item) => `• ${escapeHtml(item)}`).join("\n");
     }
 
     return {
@@ -168,15 +157,108 @@ export function getGroupScheduleMessage(
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Форматируем расписание
-  // -------------------------------------------------------------------------
+  const text = formatSchedule(isoDate, normalizedGroup, lessons);
 
-  const text = formatSchedule(
+  return {
+    ok: true,
     isoDate,
-    normalizedGroup,
-    lessons,
-  );
+    group: normalizedGroup,
+    text,
+  };
+}
+
+
+export function getGroupScheduleMessage(
+  date: string,
+  group: string,
+): ScheduleMessageResult {
+  const normalizedGroup = normalizeGroup(group);
+
+  const urlDates = parseScheduleUrl(date);
+
+  if (urlDates && urlDates.length > 0) {
+    if (urlDates.length === 1) {
+      return buildScheduleMessage(toIsoDate(urlDates[0]), normalizedGroup);
+    }
+
+    const results = urlDates.map((d) =>
+      buildScheduleMessage(toIsoDate(d), normalizedGroup),
+    );
+
+    const combinedText = results
+      .map((r) => r.text)
+      .join("\n\n➖➖➖\n\n");
+
+    return {
+      ok: results.some((r) => r.ok),
+      text: combinedText,
+      isoDate: results[0]?.isoDate ?? toIsoDate(urlDates[0]),
+      group: normalizedGroup,
+    };
+  }
+
+  const isoDate = toIsoDate(parseUserDate(date));
+  return buildScheduleMessage(isoDate, normalizedGroup);
+}
+
+function buildScheduleMessage(
+  isoDate: string,
+  normalizedGroup: string,
+): ScheduleMessageResult {
+  const rawPage = getRawPage(isoDate);
+
+  if (!rawPage) {
+    return {
+      ok: false,
+      isoDate,
+      group: normalizedGroup,
+      text:
+        `⚠️ <b>Нет расписания</b>\n\n` +
+        `Дата: <b>${escapeHtml(formatRuDate(isoDate))}</b>\n` +
+        `Группа: <b>${escapeHtml(normalizedGroup)}</b>\n\n` +
+        `Эта дата ещё не загружена в базу.`,
+    };
+  }
+
+  if (rawPage.status !== "ok") {
+    return {
+      ok: false,
+      isoDate,
+      group: normalizedGroup,
+      text:
+        `⚠️ <b>Не удалось получить расписание</b>\n\n` +
+        `Дата: <b>${escapeHtml(formatRuDate(isoDate))}</b>\n` +
+        `Группа: <b>${escapeHtml(normalizedGroup)}</b>`,
+    };
+  }
+
+  let lessons = getLessons(isoDate, normalizedGroup);
+  lessons = lessons.filter(hasLessonData);
+  lessons = deduplicateLessons(lessons);
+
+  if (lessons.length === 0) {
+    const knownGroups = listGroupsForDate(isoDate);
+    let text =
+      `📚 <b>${escapeHtml(normalizedGroup)}</b>\n` +
+      `📅 ${escapeHtml(formatRuDate(isoDate))}\n\n` +
+      `На эту дату расписание для группы не найдено.`;
+
+    if (knownGroups.length > 0) {
+      text +=
+        `\n\n` +
+        `Доступные группы:\n` +
+        knownGroups.map((item) => `• ${escapeHtml(item)}`).join("\n");
+    }
+
+    return {
+      ok: false,
+      isoDate,
+      group: normalizedGroup,
+      text,
+    };
+  }
+
+  const text = formatSchedule(isoDate, normalizedGroup, lessons);
 
   return {
     ok: true,

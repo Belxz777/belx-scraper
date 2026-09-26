@@ -201,72 +201,7 @@ export function getGroupScheduleMessage(
   return buildScheduleMessage(isoDate, normalizedGroup);
 }
 
-function buildScheduleMessage(
-  isoDate: string,
-  normalizedGroup: string,
-): ScheduleMessageResult {
-  const rawPage = getRawPage(isoDate);
 
-  if (!rawPage) {
-    return {
-      ok: false,
-      isoDate,
-      group: normalizedGroup,
-      text:
-        `⚠️ <b>Нет расписания</b>\n\n` +
-        `Дата: <b>${escapeHtml(formatRuDate(isoDate))}</b>\n` +
-        `Группа: <b>${escapeHtml(normalizedGroup)}</b>\n\n` +
-        `Эта дата ещё не загружена в базу.`,
-    };
-  }
-
-  if (rawPage.status !== "ok") {
-    return {
-      ok: false,
-      isoDate,
-      group: normalizedGroup,
-      text:
-        `⚠️ <b>Не удалось получить расписание</b>\n\n` +
-        `Дата: <b>${escapeHtml(formatRuDate(isoDate))}</b>\n` +
-        `Группа: <b>${escapeHtml(normalizedGroup)}</b>`,
-    };
-  }
-
-  let lessons = getLessons(isoDate, normalizedGroup);
-  lessons = lessons.filter(hasLessonData);
-  lessons = deduplicateLessons(lessons);
-
-  if (lessons.length === 0) {
-    const knownGroups = listGroupsForDate(isoDate);
-    let text =
-      `📚 <b>${escapeHtml(normalizedGroup)}</b>\n` +
-      `📅 ${escapeHtml(formatRuDate(isoDate))}\n\n` +
-      `На эту дату расписание для группы не найдено.`;
-
-    if (knownGroups.length > 0) {
-      text +=
-        `\n\n` +
-        `Доступные группы:\n` +
-        knownGroups.map((item) => `• ${escapeHtml(item)}`).join("\n");
-    }
-
-    return {
-      ok: false,
-      isoDate,
-      group: normalizedGroup,
-      text,
-    };
-  }
-
-  const text = formatSchedule(isoDate, normalizedGroup, lessons);
-
-  return {
-    ok: true,
-    isoDate,
-    group: normalizedGroup,
-    text,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Форматирование расписания

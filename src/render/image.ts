@@ -13,11 +13,15 @@ import {
 } from "../db";
 
 import {
-  parseUserDate,
+  resolveDates,
   toIsoDate,
 } from "../dates";
 import { logger } from "../logs/logger";
-
+interface DayView {
+  isoDate: string;
+  dateText: string;
+  view: LessonView[];
+}
 // ---------------------------------------------------------------------------
 // Fonts
 // ---------------------------------------------------------------------------
@@ -250,68 +254,87 @@ export async function renderScheduleImage(
   groupRaw: string,
 ): Promise<RenderScheduleImageResult> {
   try {
-    // -----------------------------------------------------------------------
-    // 1. Собираем данные
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------
+    // 1. Резолвим дату (обычная дата ИЛИ URL, 1 или 2 дня)
+    // -------------------------------------------------------------------
 
-    const isoDate = toIsoDate(parseUserDate(dateArg));
+    const dates = resolveDates(dateArg);
+    if (dates.length === 0) {
+      return { ok: false, errorText: "Не удалось распознать дату." };
+    }
+
     const group = normalizeGroup(groupRaw);
-    const dateText = formatRuDate(isoDate);
 
-    const rawPage = getRawPage(isoDate);
+    const days: DayView[] = [];
 
-    if (!rawPage) {
-      log.debug(`attempt to get rawPage for ${dateText} failed`);
-      return {
-        ok: false,
-        errorText: "Эта дата ещё не загружена в базу.",
-      };
+    for (const date of dates) {
+      const isoDate = toIsoDate(date);
+
+      const rawPage = getRawPage(isoDate);
+      if (!rawPage) {
+        log.debug(`rawPage missing for ${isoDate}`);
+        continue;
+      }
+      if (rawPage.status !== "ok") {
+        log.debug(`rawPage status != ok for ${isoDate}: ${rawPage.status}`);
+        continue;
+      }
+
+      let lessons = getLessons(isoDate, group);
+      lessons = lessons.filter(hasLessonData);
+      lessons = deduplicateLessons(lessons);
+
+      if (lessons.length === 0) {
+        log.debug(`no lessons for ${isoDate} group=${group}`);
+        continue;
+      }
+
+      const sorted = [...lessons].sort((a, b) => {
+        const pa = a.period_no ?? 999;
+        const pb = b.period_no ?? 999;
+        return pa - pb;
+      });
+
+      const view: LessonView[] = sorted.map((l) => ({
+        periodNo: l.period_no,
+        timeRange: l.time_range ? normalizeTime(l.time_range) : null,
+        subject: l.subject,
+        teacher: l.teacher,
+        room: l.room ? formatRoom(l.room) : null,
+        flags: parseJsonArray(l.flags),
+      }));
+
+      days.push({
+        isoDate,
+        dateText: formatRuDate(isoDate),
+        view,
+      });
     }
 
-    if (rawPage.status !== "ok") {
-      log.debug(`getRawPage error: ${rawPage.status}`);
-      return {
-        ok: false,
-        errorText: "Не удалось получить расписание для этой даты.",
-      };
-    }
-
-    let lessons = getLessons(isoDate, group);
-    lessons = lessons.filter(hasLessonData);
-    lessons = deduplicateLessons(lessons);
-
-    if (lessons.length === 0) {
-      log.debug(`no lessons found for ${dateText} group=${group}`);
+    if (days.length === 0) {
       return {
         ok: false,
         errorText: "На эту дату расписание для группы не найдено.",
       };
     }
 
-    const sorted = [...lessons].sort((a, b) => {
-      const pa = a.period_no ?? 999;
-      const pb = b.period_no ?? 999;
-      return pa - pb;
-    });
+    // -------------------------------------------------------------------
+    // 2. Считаем высоту
+    // -------------------------------------------------------------------
 
-    const view: LessonView[] = sorted.map((l) => ({
-      periodNo: l.period_no,
-      timeRange: l.time_range ? normalizeTime(l.time_range) : null,
-      subject: l.subject,
-      teacher: l.teacher,
-      room: l.room ? formatRoom(l.room) : null,
-      flags: parseJsonArray(l.flags),
-    }));
+    const DAY_HEADER_H = 56;
 
-    // -----------------------------------------------------------------------
-    // 2. Рисуем
-    // -----------------------------------------------------------------------
+    let height = PAD + HEADER_H;
+    for (const day of days) {
+      height += DAY_HEADER_H;
+      for (const l of day.view) height += lessonHeight(l) + LESSON_GAP;
+    }
+    height -= LESSON_GAP; // убираем хвостовой отступ
+    height += PAD;
 
-    const boxesH =
-      view.reduce((sum, l) => sum + lessonHeight(l), 0) +
-      LESSON_GAP * Math.max(0, view.length - 1);
-
-    const height = PAD + HEADER_H + boxesH + PAD;
+    // -------------------------------------------------------------------
+    // 3. Рисуем
+    // -------------------------------------------------------------------
 
     const canvas = createCanvas(WIDTH, height);
     const ctx = canvas.getContext("2d");
@@ -319,7 +342,7 @@ export async function renderScheduleImage(
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, WIDTH, height);
 
-    // ---- Header -----------------------------------------------------------
+    // ---- Шапка ---------------------------------------------------------
 
     ctx.fillStyle = ACCENT;
     roundRect(ctx, PAD, PAD + 6, 4, 68, 2);
@@ -336,115 +359,139 @@ export async function renderScheduleImage(
       PAD + 48,
     );
 
+    const headerDateText =
+      days.length === 1
+        ? days[0].dateText
+        : `${days[0].dateText} — ${days[days.length - 1].dateText}`;
+
     ctx.fillStyle = MUTED;
     ctx.font = font("normal", 22);
     ctx.fillText(
-      ellipsize(ctx, dateText, WIDTH - PAD * 2 - 20),
+      ellipsize(ctx, headerDateText, WIDTH - PAD * 2 - 20),
       PAD + 20,
       PAD + 82,
     );
 
-    // ---- Lessons ----------------------------------------------------------
+    // ---- Занятия -------------------------------------------------------
 
     const boxX = PAD;
     const boxW = WIDTH - PAD * 2;
     let y = PAD + HEADER_H;
 
-    for (const l of view) {
-      const h = lessonHeight(l);
+    for (const day of days) {
+      // Под-шапка дня (рисуем, только если дней больше одного)
+      if (days.length > 1) {
+        ctx.fillStyle = ACCENT;
+        ctx.font = font("bold", 24);
+        ctx.fillText(
+          ellipsize(ctx, `▸ ${day.dateText}`, boxW),
+          boxX,
+          y + 32,
+        );
+        y += DAY_HEADER_H;
+      }
 
-      ctx.fillStyle = CARD;
-      roundRect(ctx, boxX, y, boxW, h, 16);
-      ctx.fill();
+      for (const l of day.view) {
+        const h = lessonHeight(l);
 
-      ctx.save();
-      roundRect(ctx, boxX, y, boxW, h, 16);
-      ctx.clip();
-      ctx.fillStyle = ACCENT;
-      ctx.fillRect(boxX, y, 6, h);
-      ctx.restore();
+        ctx.fillStyle = CARD;
+        roundRect(ctx, boxX, y, boxW, h, 16);
+        ctx.fill();
 
-      const badgeR = 22;
-      const badgeCX = boxX + 22 + badgeR;
-      const badgeCY = y + 18 + badgeR;
+        ctx.save();
+        roundRect(ctx, boxX, y, boxW, h, 16);
+        ctx.clip();
+        ctx.fillStyle = ACCENT;
+        ctx.fillRect(boxX, y, 6, h);
+        ctx.restore();
 
-      ctx.fillStyle = CARD_HEADER;
-      ctx.beginPath();
-      ctx.arc(badgeCX, badgeCY, badgeR, 0, Math.PI * 2);
-      ctx.fill();
+        const badgeR = 22;
+        const badgeCX = boxX + 22 + badgeR;
+        const badgeCY = y + 18 + badgeR;
 
-      ctx.fillStyle = ACCENT;
-      ctx.font = font("bold", 22);
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(
-        l.periodNo !== null ? String(l.periodNo) : "–",
-        badgeCX,
-        badgeCY + 1,
-      );
+        ctx.fillStyle = CARD_HEADER;
+        ctx.beginPath();
+        ctx.arc(badgeCX, badgeCY, badgeR, 0, Math.PI * 2);
+        ctx.fill();
 
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = ACCENT;
+        ctx.font = font("bold", 22);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(
+          l.periodNo !== null ? String(l.periodNo) : "–",
+          badgeCX,
+          badgeCY + 1,
+        );
 
-      ctx.fillStyle = TEXT;
-      ctx.font = font("bold", 22);
-      ctx.fillText(
-        l.timeRange ?? "время неизвестно",
-        badgeCX + badgeR + 14,
-        badgeCY + 8,
-      );
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
 
-      let cy = y + 18 + 44 + 10 + 22;
-      const contentX = boxX + 22;
-      const contentW = boxW - 44;
-
-      if (l.subject) {
         ctx.fillStyle = TEXT;
-        ctx.font = font("bold", 26);
-        ctx.fillText(ellipsize(ctx, l.subject, contentW), contentX, cy);
-        cy += 28 + 6;
-      }
-      if (l.teacher) {
-        ctx.fillStyle = MUTED;
-        ctx.font = font("normal", 20);
+        ctx.font = font("bold", 22);
         ctx.fillText(
-          ellipsize(ctx, "✎ " + l.teacher, contentW),
-          contentX,
-          cy,
+          l.timeRange ?? "время неизвестно",
+          badgeCX + badgeR + 14,
+          badgeCY + 8,
         );
-        cy += 22 + 2;
-      }
-      if (l.room) {
-        ctx.fillStyle = MUTED;
-        ctx.font = font("normal", 20);
-        ctx.fillText(
-          ellipsize(ctx, "⌂ " + l.room, contentW),
-          contentX,
-          cy,
-        );
-        cy += 22 + 2;
-      }
-      if (l.flags.length > 0) {
-        ctx.fillStyle = SUBTLE;
-        ctx.font = font("normal", 18);
-        ctx.fillText(
-          ellipsize(ctx, "⌗ " + l.flags.join(", "), contentW),
-          contentX,
-          cy,
-        );
-      }
 
-      y += h + LESSON_GAP;
+        let cy = y + 18 + 44 + 10 + 22;
+        const contentX = boxX + 22;
+        const contentW = boxW - 44;
+
+        if (l.subject) {
+          ctx.fillStyle = TEXT;
+          ctx.font = font("bold", 26);
+          ctx.fillText(ellipsize(ctx, l.subject, contentW), contentX, cy);
+          cy += 28 + 6;
+        }
+        if (l.teacher) {
+          ctx.fillStyle = MUTED;
+          ctx.font = font("normal", 20);
+          ctx.fillText(
+            ellipsize(ctx, "✎ " + l.teacher, contentW),
+            contentX,
+            cy,
+          );
+          cy += 22 + 2;
+        }
+        if (l.room) {
+          ctx.fillStyle = MUTED;
+          ctx.font = font("normal", 20);
+          ctx.fillText(
+            ellipsize(ctx, "⌂ " + l.room, contentW),
+            contentX,
+            cy,
+          );
+          cy += 22 + 2;
+        }
+        if (l.flags.length > 0) {
+          ctx.fillStyle = SUBTLE;
+          ctx.font = font("normal", 18);
+          ctx.fillText(
+            ellipsize(ctx, "⌗ " + l.flags.join(", "), contentW),
+            contentX,
+            cy,
+          );
+        }
+
+        y += h + LESSON_GAP;
+      }
     }
 
-    // -----------------------------------------------------------------------
-    // 3. Сохраняем
-    // -----------------------------------------------------------------------
+    // -------------------------------------------------------------------
+    // 4. Сохраняем
+    // -------------------------------------------------------------------
 
     mkdirSync(IMAGE_DIR, { recursive: true });
 
     const safeGroup = group.replace(/[^A-Za-zА-Яа-я0-9_-]/g, "_");
-    const fileName = `schedule-${isoDate}-${safeGroup}.png`;
+
+    const fileName =
+      days.length === 1
+        ? `schedule-${days[0].isoDate}-${safeGroup}.png`
+        : `schedule-${days[0].isoDate}_${days[days.length - 1].isoDate}-${safeGroup}.png`;
+
     const filePath = join(IMAGE_DIR, fileName);
 
     const buffer = canvas.toBuffer("image/png");
@@ -452,20 +499,18 @@ export async function renderScheduleImage(
 
     const caption =
       `<b>${escapeHtml(group)}</b> · ` +
-      `<i>${escapeHtml(dateText)}</i>`;
-    log.info(`renderScheduleImage ok: ${filePath} for group=${group} date=${dateText}`);
-    return {
-      ok: true,
-      filePath,
-      fileName,
-      caption,
-    };
+      `<i>${escapeHtml(headerDateText)}</i>`;
+
+    log.info(
+      `renderScheduleImage ok: ${filePath} for group=${group} days=${days.length}`,
+    );
+
+    return { ok: true, filePath, fileName, caption };
   } catch (error) {
     log.error(`renderScheduleImage error: ${error}`);
-      return {
+    return {
       ok: false,
-      errorText:
-        error instanceof Error ? error.message : String(error),
+      errorText: error instanceof Error ? error.message : String(error),
     };
   }
 }

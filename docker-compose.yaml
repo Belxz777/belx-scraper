@@ -19,4 +19,4 @@ services:
       - "127.0.0.1:3200:3200"
 
     volumes:
-      - ./data:/app/data
+      - /home/deployer/apps/pilot-bot/data:/app/data

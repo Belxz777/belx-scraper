@@ -6,4 +6,4 @@ docker image prune -a -f
 docker compose up -d --build
 
 
-че то
+че то то

@@ -4,3 +4,6 @@ docker image prune -a -f
 
 # Пересборка и запуск
 docker compose up -d --build
+
+
+че то

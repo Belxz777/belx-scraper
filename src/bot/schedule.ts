@@ -180,7 +180,7 @@ export function getGroupScheduleMessage(
     if (urlDates.length === 1) {
       return buildScheduleMessage(toIsoDate(urlDates[0]), normalizedGroup);
     }
-
+// че то
     const results = urlDates.map((d) =>
       buildScheduleMessage(toIsoDate(d), normalizedGroup),
     );

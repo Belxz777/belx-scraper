@@ -17,6 +17,15 @@ const MONTHS_INDEX = new Map<string, number>(
 
 const BASE_URL = "https://www.pilot-ipek.ru/raspo";
 /**
+ * ф-ция приводит число к двухзначному формату 
+ *  пример: 1 -> 01, 10 -> 10 и т.д.
+ * нужно потому что ипэк принимает первые 10 дней в формате /raspo/01 сентября
+ *  */ 
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
  * Разбор пользовательского ввода, который может быть URL сайта.
  * Возвращает массив дат или null, если это не URL.
  */
@@ -63,7 +72,7 @@ export function resolveDates(
 
 /** JS Date -> "23 сентября" (без года, как в URL сайта) */
 export function toUrlDatePart(date: Date): string {
-  const day = date.getDate();
+  const day = pad2(date.getDate());
   const month = MONTHS_GENITIVE[date.getMonth()] ?? MONTHS_GENITIVE[0];
   return `${day} ${month}`;
 }
@@ -87,9 +96,9 @@ export function getStudyWeekPair(date: Date): [Date, Date] {
   return [friday, saturday];
 }
 
-/** Парный слаг вида "25, 26 сентября" */
+/** Парный слаг вида  пример: "25, 26 сентября" */
 export function toPairedSlug(friday: Date, saturday: Date): string {
-  return `${friday.getDate()}, ${saturday.getDate()} ${MONTHS_GENITIVE[friday.getMonth()]}`;
+  return `${pad2(friday.getDate())}, ${pad2(saturday.getDate())} ${MONTHS_GENITIVE[friday.getMonth()]}`;
 }
 
 /** Единый URL расписания для любой даты — всегда парный (пятница+суббота) */
@@ -101,7 +110,7 @@ export function toPairedSlug(friday: Date, saturday: Date): string {
  *   пн..чт, вс -> одиночный "28 сентября"
  */
 export function toScheduleUrl(date: Date): string {
-  const d = startOfDay(date);
+  const d = startOfDay(date); //
   const day = d.getDay(); // 0=вс, 1=пн, ..., 5=пт, 6=сб
 
   // Суббота — часть пары пт+сб
@@ -137,6 +146,7 @@ export function toScheduleUrl(date: Date): string {
  *
  * Возвращает [] если слаг не распознан.
  */
+
 export function parseScheduleSlug(slug: string, year: number): Date[] {
   const decoded = decodeURIComponent(slug).trim();
 

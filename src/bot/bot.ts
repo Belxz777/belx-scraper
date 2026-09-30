@@ -157,7 +157,43 @@ function parseScheduleArgs(
 // ---------------------------------------------------------------------------
 // Единая отправка расписания: текст или картинка
 // ---------------------------------------------------------------------------
+async function handleScheduleRequest(
+  ctx: any,
+  dateArg: string,
+  group: string,
+  asImage: boolean,
+): Promise<void> {
+  const dates = resolveDates(dateArg);
 
+  await ctx.reply("↻ Проверяю расписание...");
+
+  for (const d of dates) {
+    const fetched = await ensureSchedule(d);
+
+    if (fetched.status === "notfound") {
+      await ctx.reply(
+        `❌ На <b>${escapeHtml(toIsoDate(d))}</b> страница расписания отсутствует.`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    if (fetched.status === "error") {
+      await ctx.reply(
+        [
+          "❌ Не удалось загрузить расписание.",
+          fetched.error
+            ? `Ошибка: <code>${escapeHtml(fetched.error)}</code>\nВероятнее всего расписание еще не выложили`
+            : "",
+        ].filter(Boolean).join("\n"),
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+  }
+
+  await replySchedule(ctx, dateArg, group, asImage);
+}
 async function replySchedule(
   ctx: any,
   dateArg: string,
@@ -420,23 +456,14 @@ bot.command(
   "schedule",
   async (ctx) => {
     try {
+      const chatId = getChatId(ctx);
+      const saved = getChatGroup(chatId);
 
-      const chatId =
-        getChatId(ctx);
+      const { group, dateArg, image } = parseScheduleArgs(
+        String(ctx.match ?? ""),
+        saved?.group_name ?? null,
+      );
 
-      const saved =
-        getChatGroup(chatId);
-
-     const {
-  group,
-  dateArg,
-  image,
-} = parseScheduleArgs(
-  String(ctx.match ?? ""),
-  saved?.group_name ?? null,
-);
-
-      // Нет группы
       if (!group) {
         await ctx.reply(
           [
@@ -448,61 +475,13 @@ bot.command(
             "или укажи её прямо:",
             "<code>/schedule И-26-1</code>",
           ].join("\n"),
-          {
-            parse_mode: "HTML",
-          },
+          { parse_mode: "HTML" },
         );
-
         return;
       }
 
-      // ---------------------------------------------------------------------
-      // Вычисляем дату
-      // ---------------------------------------------------------------------
-
-      const date =
-        parseUserDate(dateArg);
-
-      const isoDate =
-        toIsoDate(date);
-
-      // ---------------------------------------------------------------------
-      // Проверяем БД.
-      // Если данных нет — скачиваем.
-      // ---------------------------------------------------------------------
-
-const dates = resolveDates(dateArg);
-
-await ctx.reply("↻ Проверяю расписание...");
-
-for (const d of dates) {
-  const fetched = await ensureSchedule(d);
-
-  if (fetched.status === "notfound") {
-    await ctx.reply(
-      `❌ На <b>${escapeHtml(toIsoDate(d))}</b> страница расписания отсутствует.`,
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
-
-  if (fetched.status === "error") {
-    await ctx.reply(
-      [
-        "❌ Не удалось загрузить расписание.",
-        fetched.error
-          ? `Ошибка: <code>${escapeHtml(fetched.error)}</code>\nВероятнее всего расписание еще не выложили`
-          : "",
-      ].filter(Boolean).join("\n"),
-      { parse_mode: "HTML" },
-    );
-    return;
-  }
-}
-
-await replySchedule(ctx, dateArg, group, image === true)
-    } 
-    catch (error) {
+      await handleScheduleRequest(ctx, dateArg, group, image === true);
+    } catch (error) {
       log.error(`schedule command error: ${error}`);
       await ctx.reply(
         "❌ Произошла внутренняя ошибка при получении расписания.",
@@ -545,56 +524,33 @@ bot.command(
 
 async function sendScheduleForCommand(
   ctx: any,
-  dateArg: string,
+  defaultDateArg: string,
 ) {
   try {
-    const saved =
-      getChatGroup(
-        getChatId(ctx),
-      );
+    const saved = getChatGroup(getChatId(ctx));
 
-    if (!saved) {
+    // Разрешаем переопределить группу и запросить картинку:
+    //   /today И-26-1 image
+    //   /tomorrow image
+    const { group, image } = parseScheduleArgs(
+      String(ctx.match ?? ""),
+      saved?.group_name ?? null,
+    );
+
+    if (!group) {
       await ctx.reply(
         "❗ У этого чата не указана группа.\n\n" +
         "Используй:\n" +
         "<code>/setgroup И-26-1</code>",
-        {
-          parse_mode: "HTML",
-        },
+        { parse_mode: "HTML" },
       );
-
       return;
     }
 
-    const date =
-      parseUserDate(dateArg);
-
-    await ensureSchedule(date);
-
-    const result =
-      getGroupScheduleMessage(
-        dateArg,
-        saved.group_name,
-      );
-
-    await ctx.reply(
-      result.text,
-      {
-        parse_mode: "HTML",
-        link_preview_options: {
-          is_disabled: true,
-        },
-      },
-    );
+    await handleScheduleRequest(ctx, defaultDateArg, group, image === true);
   } catch (error) {
-    console.error(
-      `${dateArg} command error:`,
-      error,
-    );
-
-    await ctx.reply(
-      "❌ Не удалось получить расписание.",
-    );
+    log.error(`${defaultDateArg} command error: ${error}`);
+    await ctx.reply("❌ Не удалось получить расписание.");
   }
 }
 

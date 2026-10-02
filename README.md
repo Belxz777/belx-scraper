@@ -4,7 +4,6 @@
 
 Линтер biome : https://biomejs.dev/guides/getting-started/
 там вся документация 
-bunx --bun @biomejs/biome format --write
 ```sh
 # Format specific files
 bunx --bun @biomejs/biome format --write <files>
@@ -24,6 +23,8 @@ bunx --bun @biomejs/biome check --write <files>
 напишу здесь , а то скоро интернета в россии не будет бля
 
 ## Коротко о структуре :
+
+```text
 ├── bot
 │   ├── bot.ts - все команды бота (центр принятия решений)
 │   ├── cron.ts - запланированная фича для авторассылки в определенное время
@@ -48,3 +49,4 @@ bunx --bun @biomejs/biome check --write <files>
 │   └── index.ts - ф-ции формирование ссылок на запрос расписания с сайта
 └── utils
     └── index.ts  - вспомогательные ф-ции
+```

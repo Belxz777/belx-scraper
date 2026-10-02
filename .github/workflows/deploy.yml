@@ -86,7 +86,6 @@
 #       - name: Clean old Docker images
 #         run: |
 #           docker image prune -f || true
-
 name: cicd_pilot-scraper
 
 on:
@@ -104,7 +103,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  BUN_VERSION: "1.2.x"   # закрепите вашу версию
+  BUN_VERSION: "1.4.0"   # закрепите вашу версию
 
 jobs:
   test:

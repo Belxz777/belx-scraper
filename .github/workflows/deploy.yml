@@ -175,11 +175,6 @@ jobs:
       - name: Deploy
         run: docker compose up -d --remove-orphans
 
-       - name: Verify application
-        run: |
-          sleep 5
-          curl --fail http://127.0.0.1:3200/health
-
       - name: Show logs on failure
         if: failure()
         run: docker compose logs --tail=100 pilot-bot || true

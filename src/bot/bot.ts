@@ -10,21 +10,26 @@ import {
 
 import {
   getGroupScheduleMessage,
-} from "./schedule";
+} from "../messages/schedule";
 
 import {
   ensureSchedule,
-} from "./sch-service";
+} from "../fetch";
 
 import {
   parseUserDate,
   resolveDates,
-  toIsoDate,
 } from "../dates";
 import {  isAdmin } from "../roles/rules";
-import { renderScheduleImage } from "../render/image";
+import { renderScheduleImage } from "../images/image";
 import {  logger } from "../logs/logger";
+import { toIsoDate } from "../utils";
 
+import {
+  normalizeGroup,
+  isGroupName,
+  parseScheduleArgs,
+} from "./schedule-args";
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -50,110 +55,9 @@ function getChatId(
   return String(ctx.chat.id);
 }
 
-function normalizeGroup(
-  value: string,
-): string {
-  return value
-    .trim()
-    .replace(/\s+/g, " ")
-    .toUpperCase();
-}
 
-function isGroupName(
-  value: string,
-): boolean {
-  return /^[A-ZА-ЯЁ]{1,3}-\d{2}-\d+(?:-\d+)?$/i.test(
-    value.trim(),
-  );
-}
 
-function isDateArg(
-  value: string,
-): boolean {
-  const normalized =
-    value.trim().toLowerCase();
 
-  return (
-    normalized === "today" ||
-    normalized === "tomorrow" ||
-    normalized === "yesterday" ||
-    /^\d{1,2}\.\d{1,2}$/.test(normalized) ||
-    /^\d{1,2}\.\d{1,2}\.\d{4}$/.test(normalized)
-  );
-}
-
-interface ScheduleArgs {
-  group: string | null;
-  dateArg: string;
-  image?: boolean;
-}
-
-const IMAGE_TOKENS = new Set([
-  "image", "img", "photo", "pic",
-  "фото", "картинка", "изображение",
-]);
-/**
- * Разбирает:
- *
- * /schedule
- * /schedule tomorrow
- * /schedule 23.09
- * /schedule И-26-1
- * /schedule И-26-1 tomorrow
- * /schedule tomorrow И-26-1
- */
-
-function parseScheduleArgs(
-  raw: string,
-  savedGroup: string | null,
-): ScheduleArgs {
-   const trimmed = raw.trim();
-
-  // Если пользователь вставил URL — весь ввод считаем датой.
-  const url = extractScheduleUrl(trimmed);
-  if (url) {
-    return {
-      group: savedGroup ? normalizeGroup(savedGroup) : null,
-      dateArg: url,
-      image: false,
-    };
-  }
-  const tokens = raw
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
-  let group: string | null =
-    savedGroup
-      ? normalizeGroup(savedGroup)
-      : null;
-
-  let dateArg = "today";
-  let image = false;
-
-  for (const token of tokens) {
-    const lower = token.toLowerCase();
-    if (isGroupName(token)) {
-      group = normalizeGroup(token);
-      continue;
-    }
-    if (IMAGE_TOKENS.has(lower)) {
-      image = true;
-      continue;
-    }
-
-    if (isDateArg(token)) {
-      dateArg = token;
-      continue;
-    }
-  }
-
-  return {
-    group,
-    dateArg,
-    image,
-  };
-}
 // ---------------------------------------------------------------------------
 // Единая отправка расписания: текст или картинка
 // ---------------------------------------------------------------------------
@@ -247,9 +151,6 @@ async function replySchedule(
 // ---------------------------------------------------------------------------
 // /start
 // ---------------------------------------------------------------------------
-function isScheduleUrl(value: string): boolean {
-  return /(?:https?:\/\/)?(?:www\.)?pilot-ipek\.ru\/raspo\//i.test(value);
-}
 
 function extractScheduleUrl(raw: string): string | null {
   // Берём всё от "pilot-ipek.ru/raspo/" до конца строки —
@@ -792,6 +693,7 @@ const server = Bun.serve({
       });
     },
   },
+  
 
   fetch() {
     return new Response(
@@ -929,3 +831,120 @@ function escapeHtml(
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
+async function sendScheduleToChat(
+  chatId: string,
+  group: string,
+  dateArg: string,
+  asImage: boolean,
+): Promise<void> {
+  const dates = resolveDates(dateArg);
+
+  for (const d of dates) {
+    const fetched = await ensureSchedule(d);
+
+    if (fetched.status === "notfound") {
+      await bot.api.sendMessage(
+        chatId,
+        `❌ На <b>${escapeHtml(toIsoDate(d))}</b> страница расписания отсутствует.`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    if (fetched.status === "error") {
+      await bot.api.sendMessage(
+        chatId,
+        [
+          "❌ Не удалось загрузить расписание.",
+          fetched.error
+            ? `Ошибка: <code>${escapeHtml(fetched.error)}</code>\nВероятнее всего расписание еще не выложили`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+  }
+
+  if (!asImage) {
+    const result = getGroupScheduleMessage(dateArg, group);
+
+    await bot.api.sendMessage(chatId, result.text, {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+    });
+
+    return;
+  }
+
+  const rendered = await renderScheduleImage(dateArg, group);
+
+  if (!rendered.ok || !rendered.filePath) {
+    log.error(
+      `renderScheduleImage failed for ${group}:`,
+      rendered.errorText,
+    );
+
+    const result = getGroupScheduleMessage(dateArg, group);
+
+    await bot.api.sendMessage(
+      chatId,
+      result.text ||
+        "❌ Не удалось построить изображение расписания.",
+      {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      },
+    );
+
+    return;
+  }
+
+  await bot.api.sendPhoto(chatId, new InputFile(rendered.filePath), {
+    parse_mode: "HTML",
+    caption: rendered.caption,
+  });
+}
+// отправляем расписание каждый день в следующий день в 12:00 по Самаре
+Bun.cron("0 12 * * SUN-FRI", 
+  async () => {
+  log.info("Cron: starting tomorrow schedule broadcast");
+
+  const chatIds = listChatIds();
+  if (chatIds.length === 0) {
+    log.info("Cron: no chats registered, skipping");
+    return;
+  }
+
+  let success = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const chatId of chatIds) {
+    try {
+      const saved = getChatGroup(chatId);
+      if (!saved) {
+        skipped++;
+        continue;
+      }
+
+      await sendScheduleToChat(
+        chatId,
+        saved.group_name,
+        "tomorrow",
+        false, // текст; поставь true, если хочешь картинкой
+      );
+
+      success++;
+    } catch (error) {
+      failed++;
+      log.error(`Cron: failed to send to ${chatId}: ${error}`);
+    }
+  }
+
+  log.info(
+    `Cron: done. sent=${success} failed=${failed} skipped=${skipped}`,
+  );
+},{tz : "Europe/Samara"});

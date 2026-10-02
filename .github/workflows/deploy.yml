@@ -1,35 +1,283 @@
+# name: cicd_pilot-scraper
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+#   pull_request:
+#     branches:
+#       - main
+
+#   workflow_dispatch:
+
+# permissions:
+#   contents: read
+
+# jobs:
+#   test:
+#     name: Lint and test
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+
+#       - name: Setup Bun
+#         uses: oven-sh/setup-bun@v2
+#         with:
+#           bun-version: latest
+
+#       - name: Install dependencies
+#         run: bun install --frozen-lockfile
+
+#       - name: Run Biome
+#         run: bunx biome ci .
+
+#       - name: Run tests
+#         run: bun test
+
+#   build-and-deploy:
+#     name: Build and deploy
+#     needs: test
+
+#     if: github.event_name != 'pull_request'
+
+#     runs-on: self-hosted
+
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+
+#       - name: Setup Bun
+#         uses: oven-sh/setup-bun@v2
+#         with:
+#           bun-version: latest
+
+#       - name: Install dependencies
+#         run: bun install --frozen-lockfile
+
+#       - name: Run Biome
+#         run: bunx biome ci .
+
+#       - name: Run tests
+#         run: bun test
+
+#       - name: Create production environment
+#         env:
+#           ENV_PRODUCTION: ${{ secrets.ENV_PRODUCTION }}
+#         run: |
+#           test -n "$ENV_PRODUCTION" || {
+#             echo "ENV_PRODUCTION secret is empty"
+#             exit 1
+#           }
+
+#           printf '%s\n' "$ENV_PRODUCTION" > .env.production.local
+#           chmod 600 .env.production.local
+
+#       - name: Build and deploy
+#         run: |
+#           docker compose up -d --build --remove-orphans
+
+#       - name: Verify containers
+#         run: |
+#           docker compose ps
+
+#       - name: Clean old Docker images
+#         run: |
+#           docker image prune -f || true
+
+
 name: cicd_pilot-scraper
 
-# 1. Определяем, когда запускать пайплайн
 on:
   push:
     branches:
-      - main # Пайплайн сработает автоматически при пуше в ветку main
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-deploy:
-    # Указываем GitHub запускать команды именно на вашем сервере (где запущен runner)
-    runs-on: self-hosted 
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
 
     steps:
-      # Шаг 1: Скачиваем свежую версию кода из GitHub в папку раннера
-      - name: Checkout repository code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Шаг 2: Безопасно создаем .env.production из секретов GitHub
-      - name: Create environment file
-        run: |
-          echo "${{ secrets.ENV_PRODUCTION }}" > .env.production.local
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      # Шаг 3: Перезапускаем контейнеры в Docker Compose
-      - name: Build and run Docker containers
-        run: |
-          docker compose down
-          docker compose up -d --build
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      # Шаг 4: Очищаем систему от старых неиспользуемых Docker-образов
-      - name: Clean up old Docker images
+      - name: Run Biome
+        run: bunx biome ci .
+
+      - name: Run automated tests
+        run: bun test
+
+  build-and-deploy:
+    name: Build and deploy
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: self-hosted
+
+    steps:
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # Bun
+      # ---------------------------------------------------------
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # ---------------------------------------------------------
+      # Quality checks
+      # ---------------------------------------------------------
+
+      - name: Run Biome
+        run: bunx biome ci .
+
+      - name: Run automated tests
+        run: bun test
+
+      # ---------------------------------------------------------
+      # Environment
+      # ---------------------------------------------------------
+
+      - name: Create production environment
+        env:
+          ENV_PRODUCTION: ${{ secrets.ENV_PRODUCTION }}
+        run: |
+          test -n "$ENV_PRODUCTION" || {
+            echo "ERROR: ENV_PRODUCTION secret is empty"
+            exit 1
+          }
+
+          printf '%s\n' "$ENV_PRODUCTION" > .env.production.local
+          chmod 600 .env.production.local
+
+      # ---------------------------------------------------------
+      # Docker build
+      # ---------------------------------------------------------
+
+      - name: Build Docker image
+        run: |
+          docker compose build pilot-bot
+
+      # ---------------------------------------------------------
+      # Stop current bot
+      # ---------------------------------------------------------
+
+      - name: Stop current bot
+        run: |
+          docker compose stop pilot-bot || true
+
+      # ---------------------------------------------------------
+      # SQLite backup
+      # ---------------------------------------------------------
+
+      - name: Backup SQLite database
+        run: |
+          DATA_DIR="/home/deployer/apps/pilot-bot/data"
+          BACKUP_DIR="/home/deployer/apps/pilot-bot/backups"
+          TIMESTAMP="$(date '+%Y-%m-%d_%H-%M-%S')"
+
+          DB="$DATA_DIR/schedule.sqlite"
+          BACKUP="$BACKUP_DIR/schedule-${TIMESTAMP}.sqlite"
+
+          mkdir -p "$BACKUP_DIR"
+
+          echo "Checking database..."
+
+          if [ ! -f "$DB" ]; then
+            echo "ERROR: SQLite database not found:"
+            echo "$DB"
+            exit 1
+          fi
+
+          echo "Creating backup..."
+
+          cp "$DB" "$BACKUP"
+
+          if [ ! -s "$BACKUP" ]; then
+            echo "ERROR: backup file is empty"
+            rm -f "$BACKUP"
+            exit 1
+          fi
+
+          echo "Backup successfully created:"
+          ls -lh "$BACKUP"
+
+      # ---------------------------------------------------------
+      # Deploy
+      # ---------------------------------------------------------
+
+      - name: Start updated bot
+        run: |
+          docker compose up -d --remove-orphans
+
+      # ---------------------------------------------------------
+      # Verify deployment
+      # ---------------------------------------------------------
+
+      - name: Show container status
+        run: |
+          docker compose ps
+      - name: Health check 
+        run: |
+          curl --fail http://127.0.0.1:3200/health
+      # ---------------------------------------------------------
+      # Keep only last 14 SQLite backups
+      # ---------------------------------------------------------
+
+      - name: Remove old database backups
+        run: |
+          BACKUP_DIR="/home/deployer/apps/pilot-bot/backups"
+
+          if [ ! -d "$BACKUP_DIR" ]; then
+            echo "Backup directory does not exist, skipping cleanup."
+            exit 0
+          fi
+
+          find "$BACKUP_DIR" \
+            -type f \
+            -name 'schedule-*.sqlite' \
+            -printf '%T@ %p\n' |
+            sort -nr |
+            tail -n +15 |
+            cut -d' ' -f2- |
+            xargs -r rm -f
+
+          echo "Current backups:"
+          ls -lah "$BACKUP_DIR"
+
+      # ---------------------------------------------------------
+      # Docker cleanup
+      # ---------------------------------------------------------
+
+      - name: Clean old Docker images
         run: |
           docker image prune -f || true
-        
-

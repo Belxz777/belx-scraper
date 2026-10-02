@@ -50,3 +50,25 @@ bunx --bun @biomejs/biome check --write <files>
 └── utils
     └── index.ts  - вспомогательные ф-ции
 ```
+
+---
+
+##  Поддержать 
+
+<div align="center">
+
+  <table>
+    <tr>
+      <td align="center"><b>USDT (TON)</b></td>
+      <td align="center"><b>Solana(SOL)</b></td>
+    </tr>
+    <tr>
+      <td align="center"><code>UQC9ko8-fXCv3bhDVhK3S_qmLgCFDWny1fVjI7tf3RNX2M5c</code></td>
+      <td align="center"><code>8retiN8itMrWwHxVne7MgoiGEcrBXwubs4HVvBNL6vrK</code></td>
+    </tr>
+  </table>
+
+  <br>
+
+</div>
+

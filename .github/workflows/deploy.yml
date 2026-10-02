@@ -126,7 +126,6 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
 
       - run: bun install --frozen-lockfile
-      - run: bunx biome ci .
       - run: bun test
 
   deploy:

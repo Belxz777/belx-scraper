@@ -157,20 +157,20 @@ jobs:
       - name: Build Docker image
         run: docker compose build pilot-bot
 
-      - name: Backup SQLite database
-        run: |
-          DB="$APP_DIR/data/schedule.sqlite"
-          BACKUP_DIR="$APP_DIR/backups"
-          BACKUP="$BACKUP_DIR/schedule-$(date '+%Y-%m-%d_%H-%M-%S').sqlite"
+      # - name: Backup SQLite database
+      #   run: |
+      #     DB="$APP_DIR/data/schedule.sqlite"
+      #     BACKUP_DIR="$APP_DIR/backups"
+      #     BACKUP="$BACKUP_DIR/schedule-$(date '+%Y-%m-%d_%H-%M-%S').sqlite"
 
-          [ -f "$DB" ] || { echo "ERROR: database not found: $DB"; exit 1; }
-          mkdir -p "$BACKUP_DIR"
+      #     [ -f "$DB" ] || { echo "ERROR: database not found: $DB"; exit 1; }
+      #     mkdir -p "$BACKUP_DIR"
 
-          # консистентная копия без остановки бота (учитывает WAL)
-          sqlite3 "$DB" ".backup '$BACKUP'"
+      #     # консистентная копия без остановки бота (учитывает WAL)
+      #     sqlite3 "$DB" ".backup '$BACKUP'"
 
-          [ -s "$BACKUP" ] || { echo "ERROR: backup is empty"; rm -f "$BACKUP"; exit 1; }
-          ls -lh "$BACKUP"
+      #     [ -s "$BACKUP" ] || { echo "ERROR: backup is empty"; rm -f "$BACKUP"; exit 1; }
+      #     ls -lh "$BACKUP"
 
       - name: Deploy
         run: docker compose up -d --remove-orphans
@@ -185,10 +185,10 @@ jobs:
         if: failure()
         run: docker compose logs --tail=100 pilot-bot || true
 
-      - name: Remove old database backups (keep 14)
-        run: |
-          ls -1t "$APP_DIR"/backups/schedule-*.sqlite 2>/dev/null \
-            | tail -n +15 | xargs -r rm -f
+      # - name: Remove old database backups (keep 14)
+      #   run: |
+      #     ls -1t "$APP_DIR"/backups/schedule-*.sqlite 2>/dev/null \
+      #       | tail -n +15 | xargs -r rm -f
 
       - name: Clean old Docker images
         run: docker image prune -f --filter "until=168h" || true

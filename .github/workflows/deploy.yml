@@ -175,11 +175,10 @@ jobs:
       - name: Deploy
         run: docker compose up -d --remove-orphans
 
-      - name: Health check
+       - name: Verify application
         run: |
-          curl --fail --silent --show-error \
-            --retry 12 --retry-delay 5 --retry-connrefused \
-            http://127.0.0.1:3200/health
+          sleep 5
+          curl --fail http://127.0.0.1:3200/health
 
       - name: Show logs on failure
         if: failure()

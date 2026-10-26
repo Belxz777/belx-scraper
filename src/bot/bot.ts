@@ -1,4 +1,4 @@
-import { Bot, InputFile } from "grammy";
+import { Bot, InputFile, webhookCallback } from "grammy";
 import { parseUserDate, resolveDates } from "../dates";
 import {
 	deleteChatGroup,
@@ -32,7 +32,9 @@ if (!token) {
 }
 const log = logger.child({ module: "bot.ts" });
 export const bot = new Bot(token);
-
+export const POST = webhookCallback(bot, "std/http",{
+	secretToken: process.env.WEBHOOK_SECRET_TOKEN,
+});
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
